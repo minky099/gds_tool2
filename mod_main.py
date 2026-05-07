@@ -642,6 +642,8 @@ class ModuleMain(PluginModuleBase):
                     ret['ret'] = 'error'
                     ret['msg'] = '폴더 ID를 입력하세요.'
                 else:
+                    if arg2 in ('0', '1'):
+                        P.ModelSetting.set('main_recursive', 'True' if arg2 == '1' else 'False')
                     files = self._get_file_list(fid)
                     try:
                         max_gb = float(P.ModelSetting.get('main_max_batch_gb') or DEFAULT_BATCH_GB)
@@ -675,6 +677,8 @@ class ModuleMain(PluginModuleBase):
                     if ret['ret'] == 'success':
                         try:
                             P.ModelSetting.set('main_last_source_id', fid)
+                            if arg2 in ('0', '1'):
+                                P.ModelSetting.set('main_recursive', 'True' if arg2 == '1' else 'False')
                         except Exception:
                             pass
                         t = threading.Thread(target=self._batch_worker, args=(fid,), daemon=True)

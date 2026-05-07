@@ -76,14 +76,16 @@ $("body").on('click', '#preview_btn', function(e) {
   e.preventDefault();
   var fid = $('#main_last_source_id').val().trim();
   if (!fid) { alert('폴더 ID를 입력하세요.'); return; }
-  globalSendCommand('preview_files', fid, '', '');
+  var rec = $('#main_recursive').prop('checked') ? '1' : '0';
+  globalSendCommand('preview_files', fid, rec, '');
 });
 
 $("body").on('click', '#start_btn', function(e) {
   e.preventDefault();
   var fid = $('#main_last_source_id').val().trim();
   if (!fid) { alert('폴더 ID를 입력하세요.'); return; }
-  globalSendCommand('start_batch', fid, '', '', function(ret) {
+  var rec = $('#main_recursive').prop('checked') ? '1' : '0';
+  globalSendCommand('start_batch', fid, rec, '', function(ret) {
     if (ret.ret === 'success') {
       $('#batch-status').show();
       setBadge(true);
