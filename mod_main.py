@@ -101,6 +101,20 @@ class ModuleMain(PluginModuleBase):
         except Exception:
             pass
 
+    # ── 설정 저장 후 훅 (프레임워크가 호출) ──────────────────────
+    # 폼 필드 tmp_main_nas_password 는 setting_save 단계에서 'tmp_' 접두사로
+    # 자동 스킵된다. 여기서 직접 읽어 암호화한 뒤 main_nas_password 에 저장.
+    def setting_save_after(self, change_list):
+        try:
+            from flask import request
+            plain = (request.form.get('tmp_main_nas_password') or '').strip()
+            if plain:
+                P.ModelSetting.set('main_nas_password', self._encrypt(plain))
+                P.logger.info('NAS password encrypted & saved')
+        except Exception as e:
+            P.logger.error(f'setting_save_after exception: {e}')
+            P.logger.error(traceback.format_exc())
+
     # ── 인터럽트 가능한 sleep ─────────────────────────────────────
     def _interruptible_sleep(self, seconds):
         end = time.time() + seconds
@@ -494,26 +508,12 @@ class ModuleMain(PluginModuleBase):
         self._emit_progress()
 
     # ── SJVA command 핸들러 ───────────────────────────────────────
+    # 설정 저장은 프레임워크의 globalSettingSaveBtn 이 처리한다.
+    # 여기서는 커스텀 명령(SSH 테스트, 미리보기, 배치 시작/중단, 상태 조회)만 다룸.
     def process_command(self, command, arg1, arg2, arg3, req):
         ret = {'ret': 'success'}
         try:
-            if command == 'save_setting':
-                fields = [
-                    'main_nas_ip', 'main_nas_port', 'main_nas_user',
-                    'main_script_path', 'main_gdrive_remote',
-                    'main_max_batch_gb', 'main_poll_interval', 'main_copy_timeout',
-                    'main_recursive',
-                ]
-                for key in fields:
-                    val = req.form.get(key, '')
-                    if val != '':
-                        P.ModelSetting.set(key, val)
-                plain_pw = req.form.get('main_nas_password_plain', '').strip()
-                if plain_pw:
-                    P.ModelSetting.set('main_nas_password', self._encrypt(plain_pw))
-                ret['msg'] = '설정 저장 완료'
-
-            elif command == 'test_ssh':
+            if command == 'test_ssh':
                 if self._test_ssh():
                     ret['msg'] = 'SSH 연결 성공!'
                 else:
