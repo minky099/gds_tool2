@@ -146,17 +146,17 @@ body { background: var(--bg0); color: var(--fg); }
       <div class="col-md-4">
         <label class="form-label">NAS IP</label>
         <input type="text" class="form-control" id="main_nas_ip"
-               value="{{P.ModelSetting.get('main_nas_ip')}}" placeholder="192.168.1.xxx">
+               value="{{arg['main_nas_ip']}}" placeholder="192.168.1.xxx">
       </div>
       <div class="col-md-2">
         <label class="form-label">SSH Port</label>
         <input type="number" class="form-control" id="main_nas_port"
-               value="{{P.ModelSetting.get('main_nas_port') or '22'}}">
+               value="{{arg['main_nas_port'] or '22'}}">
       </div>
       <div class="col-md-3">
         <label class="form-label">SSH User</label>
         <input type="text" class="form-control" id="main_nas_user"
-               value="{{P.ModelSetting.get('main_nas_user')}}" placeholder="admin">
+               value="{{arg['main_nas_user']}}" placeholder="admin">
       </div>
       <div class="col-md-3">
         <label class="form-label">SSH Password <span style="color:var(--fg3)">(변경 시만)</span></label>
@@ -165,12 +165,12 @@ body { background: var(--bg0); color: var(--fg); }
       <div class="col-md-6">
         <label class="form-label">rclone_move.sh 경로</label>
         <input type="text" class="form-control" id="main_script_path"
-               value="{{P.ModelSetting.get('main_script_path') or '/volume1/MK/rclone_move.sh'}}">
+               value="{{arg['main_script_path'] or '/volume1/MK/rclone_move.sh'}}">
       </div>
       <div class="col-md-6">
         <label class="form-label">내 드라이브 Remote (gds_tool 복사 대상)</label>
         <input type="text" class="form-control" id="main_gdrive_remote"
-               value="{{P.ModelSetting.get('main_gdrive_remote') or 'GDG:/Downloads'}}">
+               value="{{arg['main_gdrive_remote'] or 'GDG:/Downloads'}}">
       </div>
     </div>
     <div class="mt-3 d-flex gap-2 flex-wrap">
@@ -186,23 +186,23 @@ body { background: var(--bg0); color: var(--fg); }
       <div class="col-md-3">
         <label class="form-label">배치당 최대 용량 (GB) <span style="color:var(--fg3)">— 내 드라이브 여유 용량</span></label>
         <input type="number" step="0.1" class="form-control" id="main_max_batch_gb"
-               value="{{P.ModelSetting.get('main_max_batch_gb') or '10'}}">
+               value="{{arg['main_max_batch_gb'] or '10'}}">
       </div>
       <div class="col-md-3">
         <label class="form-label">완료 polling 간격 (초)</label>
         <input type="number" class="form-control" id="main_poll_interval"
-               value="{{P.ModelSetting.get('main_poll_interval') or '15'}}">
+               value="{{arg['main_poll_interval'] or '15'}}">
       </div>
       <div class="col-md-3">
         <label class="form-label">배치 복사 타임아웃 (초)</label>
         <input type="number" class="form-control" id="main_copy_timeout"
-               value="{{P.ModelSetting.get('main_copy_timeout') or '7200'}}">
+               value="{{arg['main_copy_timeout'] or '7200'}}">
       </div>
       <div class="col-md-3">
         <label class="form-label">하위 폴더 재귀 처리</label>
         <select class="form-control" id="main_recursive">
-          <option value="False" {% if (P.ModelSetting.get('main_recursive') or 'False') == 'False' %}selected{% endif %}>OFF — 폴더 직속 파일만</option>
-          <option value="True"  {% if  P.ModelSetting.get('main_recursive') == 'True'  %}selected{% endif %}>ON — 모든 하위 포함</option>
+          <option value="False" {% if (arg['main_recursive'] or 'False') == 'False' %}selected{% endif %}>OFF — 폴더 직속 파일만</option>
+          <option value="True"  {% if  arg['main_recursive'] == 'True'  %}selected{% endif %}>ON — 모든 하위 포함</option>
         </select>
       </div>
     </div>
