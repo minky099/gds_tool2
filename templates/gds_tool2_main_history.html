@@ -3,7 +3,7 @@
 
 <h5>작업 이력
   <span class="float-end">
-    <button id="refresh_btn" class="btn btn-sm btn-outline-secondary">새로고침</button>
+    <button id="refresh_btn" class="btn btn-sm btn-outline-primary">새로고침</button>
     <button id="clear_btn" class="btn btn-sm btn-outline-danger">전체 삭제</button>
   </span>
 </h5>
@@ -42,12 +42,18 @@ function loadHistory() {
       return;
     }
     rows.forEach(function(r) {
-      var statusClass = {
-        'completed': 'bg-success',
-        'running':   'bg-primary',
-        'stopped':   'bg-warning text-dark',
-        'error':     'bg-danger'
-      }[r.status] || 'bg-secondary';
+      var statusColor = {
+        'completed': '#198754',
+        'running':   '#0d6efd',
+        'stopped':   '#fd7e14',
+        'error':     '#dc3545'
+      }[r.status] || '#6c757d';
+      var statusLabel = {
+        'completed': '완료',
+        'running':   '실행중',
+        'stopped':   '중단',
+        'error':     '오류'
+      }[r.status] || (r.status || '');
       var $tr = $('<tr>');
       $tr.append($('<td>').text(r.id));
       $tr.append($('<td>').text(r.created_time || ''));
@@ -58,7 +64,7 @@ function loadHistory() {
       $tr.append($('<td>').text(r.total_batches || 0));
       $tr.append($('<td class="text-success">').text(r.success_count || 0));
       $tr.append($('<td class="text-danger">').text(r.fail_count || 0));
-      $tr.append($('<td>').html('<span class="badge ' + statusClass + '">' + (r.status || '') + '</span>'));
+      $tr.append($('<td>').html('<span style="font-weight:600;color:' + statusColor + ';">● ' + statusLabel + '</span>'));
       $tr.append($('<td style="font-size:11.5px;">').text(r.note || ''));
       $tr.append($('<td>').html('<button class="btn btn-sm btn-outline-danger del-btn" data-id="' + r.id + '">삭제</button>'));
       tbody.append($tr);
