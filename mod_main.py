@@ -239,6 +239,31 @@ class ModuleMain(PluginModuleBase):
             P.logger.error(traceback.format_exc())
             return []
 
+    # ── 이전 완료 기록 스킵 ───────────────────────────────────────
+    def _filter_skip_completed(self, files):
+        Model = self._get_request_model()
+        if Model is None:
+            return files
+        kept    = []
+        skipped = []
+        for f in files:
+            sid = f.get('ID')
+            try:
+                existing = Model.get_by_source_id(sid) if sid else None
+            except Exception:
+                existing = None
+            if existing is not None and (existing.status or '') == COPY_DONE_STATUS:
+                skipped.append((f.get('Name', '?'), existing.id))
+            else:
+                kept.append(f)
+        if skipped:
+            self._log(f'⏭ 이전 완료 기록으로 {len(skipped)}개 스킵')
+            for name, eid in skipped[:10]:
+                self._log(f'  · {name} (gds_tool id={eid})')
+            if len(skipped) > 10:
+                self._log(f'  · ... 외 {len(skipped) - 10}건')
+        return kept
+
     # ── 배치 그룹핑 (greedy first-fit) ────────────────────────────
     @staticmethod
     def _pack_batches(files, max_bytes, max_count=0):
@@ -302,6 +327,13 @@ class ModuleMain(PluginModuleBase):
                 self._log('처리할 파일이 없습니다.')
                 final_status = 'completed'
                 final_note   = '파일 없음'
+                return
+
+            files = self._filter_skip_completed(files)
+            if not files:
+                self._log('모든 파일이 이미 완료 기록 있음. 처리할 항목 없음.')
+                final_status = 'completed'
+                final_note   = '전부 스킵'
                 return
 
             batches = self._pack_batches(files, max_bytes, max_count)
@@ -645,6 +677,7 @@ class ModuleMain(PluginModuleBase):
                     if arg2 in ('0', '1'):
                         P.ModelSetting.set('main_recursive', 'True' if arg2 == '1' else 'False')
                     files = self._get_file_list(fid)
+                    files = self._filter_skip_completed(files)
                     try:
                         max_gb = float(P.ModelSetting.get('main_max_batch_gb') or DEFAULT_BATCH_GB)
                     except ValueError:
