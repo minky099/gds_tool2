@@ -214,7 +214,6 @@ class ModuleMain(PluginModuleBase):
             files = [
                 f for f in result
                 if not f.get('IsDir', False)
-                and (f.get('MimeType') or '').startswith('video/')
             ]
 
             # 동일 Name 충돌 감지 (재귀 시 서로 다른 하위폴더에 같은 파일명)
@@ -233,7 +232,7 @@ class ModuleMain(PluginModuleBase):
                         self._log(f'  - {n}: {ps}', 'WARN')
 
             mode = '재귀' if recursive else '단일 폴더'
-            self._log(f'[{mode}] 전체 {len(result)}개 항목 중 비디오 {len(files)}개')
+            self._log(f'[{mode}] 전체 {len(result)}개 항목 중 파일 {len(files)}개')
             return files
         except Exception as e:
             self._log(f'파일 목록 오류: {e}', 'ERROR')
@@ -300,9 +299,9 @@ class ModuleMain(PluginModuleBase):
             self._log(f'공유드라이브 파일 목록 추출: {folder_id}')
             files = self._get_file_list(folder_id)
             if not files:
-                self._log('처리할 비디오 파일이 없습니다.')
+                self._log('처리할 파일이 없습니다.')
                 final_status = 'completed'
-                final_note   = '비디오 없음'
+                final_note   = '파일 없음'
                 return
 
             batches = self._pack_batches(files, max_bytes, max_count)
@@ -655,7 +654,7 @@ class ModuleMain(PluginModuleBase):
                     ret['total_size']    = sum((f.get('Size', 0) or 0) for f in files)
                     cap_desc = f'≤{max_gb:g} GB' + (f', ≤{max_count}개' if max_count > 0 else '')
                     ret['msg'] = (
-                        f'{len(files)}개 비디오 / '
+                        f'{len(files)}개 파일 / '
                         f'{ret["total_size"]/GIB:.2f} GB / '
                         f'{len(batches)}개 배치 (배치당 {cap_desc})'
                     )
