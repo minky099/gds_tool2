@@ -5,7 +5,7 @@ setting = {
     'home_module': 'main',
     'menu': {
         'uri': __package__,
-        'name': 'GDS 배치 복사',
+        'name': 'gds_tool2',
         'list': [
             {
                 'uri': 'main',

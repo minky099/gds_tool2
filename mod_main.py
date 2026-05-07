@@ -38,6 +38,7 @@ class ModuleMain(PluginModuleBase):
             'main_max_batch_gb':     str(DEFAULT_BATCH_GB),    # 배치당 최대 용량 (GB)
             'main_poll_interval':    '15',                     # status polling 간격 (초)
             'main_copy_timeout':     '7200',                   # 배치 복사 타임아웃 (초)
+            'main_recursive':        'False',                  # 하위 폴더 재귀 처리
         }
         self._lock        = threading.Lock()
         self._is_running  = False
@@ -90,13 +91,13 @@ class ModuleMain(PluginModuleBase):
             if len(self._logs) > LOG_KEEP:
                 self._logs = self._logs[-LOG_KEEP:]
         try:
-            F.socketio.emit('gds_copy_log', entry, namespace='/framework')
+            F.socketio.emit('gds_tool2_log', entry, namespace='/framework')
         except Exception:
             pass
 
     def _emit_progress(self):
         try:
-            F.socketio.emit('gds_copy_progress', dict(self._progress), namespace='/framework')
+            F.socketio.emit('gds_tool2_progress', dict(self._progress), namespace='/framework')
         except Exception:
             pass
 
@@ -151,19 +152,40 @@ class ModuleMain(PluginModuleBase):
         return gds
 
     def _get_request_model(self):
+        # gds_tool setup.py 가 P.ModelRequestItem 으로 노출함.
+        # 미노출 환경(구버전) 대비해 importlib 폴백.
+        try:
+            gds = F.PluginManager.get_plugin_instance('gds_tool')
+            if gds is not None and hasattr(gds, 'ModelRequestItem'):
+                return gds.ModelRequestItem
+        except Exception:
+            pass
         try:
             mod = importlib.import_module('gds_tool.mod_request')
             return mod.ModelRequestItem
         except Exception as e:
-            self._log(f'gds_tool.mod_request 임포트 실패 (lsjson 폴백): {e}', 'WARN')
+            self._log(f'ModelRequestItem 접근 실패 (lsjson 단독): {e}', 'WARN')
             return None
 
     # ── 공유드라이브 파일 목록 ────────────────────────────────────
     def _get_file_list(self, folder_id):
         try:
-            gds    = self._get_gds()
-            remote = 'worker:{%s}' % folder_id
-            result = gds.SupportRcloneWorker.lsjson(remote)
+            gds       = self._get_gds()
+            remote    = 'worker:{%s}' % folder_id
+            recursive = (P.ModelSetting.get('main_recursive') or 'False') == 'True'
+
+            try:
+                if recursive:
+                    result = gds.SupportRcloneWorker.lsjson(remote, option=['-R', '--files-only'])
+                else:
+                    result = gds.SupportRcloneWorker.lsjson(remote)
+            except TypeError:
+                # 구버전 SupportRcloneWorker.lsjson(remote)만 받는 경우 폴백
+                result = gds.SupportRcloneWorker.lsjson(remote)
+                if recursive:
+                    self._log('SupportRcloneWorker.lsjson이 option 인자 미지원. 비재귀로 진행', 'WARN')
+                    recursive = False
+
             if not result:
                 self._log('lsjson 결과 없음 (폴더 비어있거나 접근 불가)', 'WARN')
                 return []
@@ -172,7 +194,24 @@ class ModuleMain(PluginModuleBase):
                 if not f.get('IsDir', False)
                 and (f.get('MimeType') or '').startswith('video/')
             ]
-            self._log(f'전체 {len(result)}개 항목 중 비디오 {len(files)}개')
+
+            # 동일 Name 충돌 감지 (재귀 시 서로 다른 하위폴더에 같은 파일명)
+            if recursive:
+                names = {}
+                for f in files:
+                    names.setdefault(f.get('Name'), []).append(f.get('Path', f.get('Name')))
+                dups = {n: ps for n, ps in names.items() if len(ps) > 1}
+                if dups:
+                    self._log(
+                        f'⚠ 재귀 모드: 동일 파일명 {len(dups)}건 충돌 — '
+                        f'내 드라이브에서 덮어쓰일 수 있음',
+                        'WARN',
+                    )
+                    for n, ps in list(dups.items())[:5]:
+                        self._log(f'  - {n}: {ps}', 'WARN')
+
+            mode = '재귀' if recursive else '단일 폴더'
+            self._log(f'[{mode}] 전체 {len(result)}개 항목 중 비디오 {len(files)}개')
             return files
         except Exception as e:
             self._log(f'파일 목록 오류: {e}', 'ERROR')
@@ -266,7 +305,7 @@ class ModuleMain(PluginModuleBase):
             self._progress['current'] = ''
             self._progress['phase']   = ''
             try:
-                F.socketio.emit('gds_copy_done', dict(self._progress), namespace='/framework')
+                F.socketio.emit('gds_tool2_done', dict(self._progress), namespace='/framework')
             except Exception:
                 pass
 
@@ -286,15 +325,17 @@ class ModuleMain(PluginModuleBase):
         )
 
         # ① 배치 내 모든 파일 add_copy 요청 (gds_tool이 백그라운드에서 병렬 처리)
-        gds          = self._get_gds()
-        gdrive       = P.ModelSetting.get('main_gdrive_remote')
-        request_ids  = []   # [(filename, request_db_id)]
-        already_done = []   # 이미 완료된 파일명
+        gds       = self._get_gds()
+        gdrive    = P.ModelSetting.get('main_gdrive_remote')
+        # 대기 대상: {filename: {'db_id': int|None, 'size': int}}
+        # db_id는 빠른 실패 감지(상태 fail_*)에만 쓰고, 완료 판정은 lsjson 기준.
+        pending = {}
 
         for f in batch:
             if self._stop_flag:
                 return
             filename = f.get('Name', '?')
+            fsize    = f.get('Size', 0) or 0
             self._progress['current'] = filename
             self._emit_progress()
             try:
@@ -303,7 +344,7 @@ class ModuleMain(PluginModuleBase):
                     folder_name   = filename,
                     board_type    = 'direct',
                     category_type = '',
-                    size          = f.get('Size', 0) or 0,
+                    size          = fsize,
                     count         = 1,
                     copy_type     = 'file',
                     remote_path   = gdrive,
@@ -311,20 +352,15 @@ class ModuleMain(PluginModuleBase):
                 status = ret.get('ret', 'fail')
                 req_id = ret.get('request_db_id')
 
-                if status == 'success' and req_id is not None:
-                    request_ids.append((filename, req_id))
+                if status == 'success':
+                    pending[filename] = {'db_id': req_id, 'size': fsize}
                     self._log(f'  ↳ 복사 요청: {filename} (id={req_id})')
                 elif status == 'already':
+                    # gds_tool DB는 'completed'라고 하지만 실제 파일이 없을 수 있음.
+                    # → 무조건 lsjson 기준으로 다시 확인하도록 pending에 등록.
                     prev_status = ret.get('status', '')
-                    if prev_status == COPY_DONE_STATUS:
-                        already_done.append(filename)
-                        self._log(f'  ↳ 이미 완료됨: {filename}', 'WARN')
-                    elif req_id is not None:
-                        request_ids.append((filename, req_id))
-                        self._log(f'  ↳ 진행중인 요청 재사용: {filename} (id={req_id}, {prev_status})')
-                    else:
-                        self._log(f'  ↳ 중복 항목인데 id 없음: {filename}', 'WARN')
-                        self._mark_failed(filename)
+                    pending[filename] = {'db_id': req_id, 'size': fsize}
+                    self._log(f'  ↳ 기존 요청 재사용: {filename} (id={req_id}, prev={prev_status})')
                 else:
                     self._log(f'  ↳ 복사 요청 실패 ({status}): {filename} / {ret}', 'ERROR')
                     self._mark_failed(filename)
@@ -333,60 +369,86 @@ class ModuleMain(PluginModuleBase):
                 P.logger.error(traceback.format_exc())
                 self._mark_failed(filename)
 
-        # 요청 단계에서 모두 실패 + 이미 완료된 것도 없으면 NAS 단계 스킵
-        if not request_ids and not already_done:
+        if not pending:
             self._log(f'배치 [{bi}] 처리 가능한 항목 없음. 다음 배치로.', 'WARN')
             return
 
-        # ② 모든 요청이 'completed' 될 때까지 polling
-        if request_ids:
-            self._progress['phase'] = 'wait'
-            self._emit_progress()
-            self._wait_batch_complete(bi, request_ids)
-            if self._stop_flag:
-                return
-
-        # ③ NAS 이동 (이번 배치만의 파일이 GDG:/Downloads에 있을 것)
-        self._progress['phase']   = 'nas'
-        self._progress['current'] = '(NAS rclone 이동중)'
+        # ② 내 드라이브에 모든 파일이 실제로 도착할 때까지 대기 (lsjson 기준)
+        self._progress['phase'] = 'wait'
         self._emit_progress()
-        self._run_nas_move(bi)
+        self._wait_batch_present(bi, pending)
+        if self._stop_flag:
+            return
+
+        # 한 파일도 도착 못했으면 NAS 단계 스킵
+        if self._progress['batch_done'] == 0:
+            self._log(f'배치 [{bi}] 도착한 파일 없음. NAS 단계 스킵.', 'WARN')
+        else:
+            # ③ NAS 이동 (이번 배치 파일들이 GDG:/Downloads에 있음)
+            self._progress['phase']   = 'nas'
+            self._progress['current'] = '(NAS rclone 이동중)'
+            self._emit_progress()
+            self._run_nas_move(bi)
 
         # ④ overall 통계 갱신
-        self._progress['overall_done']   += self._progress['batch_done'] + len(already_done)
+        self._progress['overall_done']   += self._progress['batch_done']
         self._progress['overall_failed'] += self._progress['batch_failed']
         self._emit_progress()
 
-    # ── 배치 내 모든 요청 완료 대기 ───────────────────────────────
-    def _wait_batch_complete(self, bi, request_ids):
+    # ── 배치 내 모든 파일이 내 드라이브에 도착할 때까지 대기 ────────
+    # 완료 판정: lsjson에 동일 Name이 존재하고 Size가 원본 이상.
+    # DB status는 보조 신호로만 사용 — 'fail_*'면 즉시 실패 처리.
+    # 'completed'여도 파일이 없으면 계속 대기 (이게 사용자가 본 케이스).
+    def _wait_batch_present(self, bi, pending):
+        from support.expand.rclone import SupportRclone
+
         Model    = self._get_request_model()
+        remote   = P.ModelSetting.get('main_gdrive_remote')
         interval = max(int(P.ModelSetting.get('main_poll_interval') or 15), 3)
         timeout  = int(P.ModelSetting.get('main_copy_timeout')  or 7200)
         deadline = time.time() + timeout
-        pending  = dict(request_ids)   # {filename: db_id}
-        finished = {}                  # {filename: status}
 
-        self._log(f'배치 [{bi}] 복사 완료 대기 ({len(pending)}개, 타임아웃 {timeout}s)')
+        self._log(
+            f'배치 [{bi}] 내 드라이브 도착 대기 ({len(pending)}개, '
+            f'타임아웃 {timeout}s, 기준 remote={remote})'
+        )
 
         while pending and time.time() < deadline:
             if self._stop_flag:
-                self._log(f'배치 [{bi}] polling 중 사용자 중단', 'WARN')
+                self._log(f'배치 [{bi}] 대기 중 사용자 중단', 'WARN')
                 return
-            for fname, did in list(pending.items()):
-                status = self._query_status(Model, fname, did)
-                if status == COPY_DONE_STATUS:
-                    finished[fname] = status
-                    pending.pop(fname)
-                    self._progress['batch_done'] += 1
-                    self._progress['current']     = fname
-                    self._log(f'  ✓ 완료: {fname}')
-                    self._emit_progress()
-                elif status and status.startswith(COPY_FAIL_PREFIX):
-                    finished[fname] = status
-                    pending.pop(fname)
-                    self._progress['batch_failed'] += 1
-                    self._log(f'  ✗ 실패 ({status}): {fname}', 'ERROR')
-                    self._emit_progress()
+
+            # 한 라운드에 lsjson 1회 호출
+            try:
+                drive_files = SupportRclone.lsjson(remote) or []
+            except Exception as e:
+                self._log(f'lsjson 오류 (재시도 예정): {e}', 'WARN')
+                drive_files = None
+
+            if drive_files is not None:
+                by_name = {
+                    f.get('Name'): (f.get('Size', 0) or 0)
+                    for f in drive_files
+                    if not f.get('IsDir', False)
+                }
+                for fname, info in list(pending.items()):
+                    expected = info['size']
+                    actual   = by_name.get(fname)
+                    if actual is not None and (expected <= 0 or actual >= expected):
+                        pending.pop(fname)
+                        self._progress['batch_done'] += 1
+                        self._progress['current']     = fname
+                        self._log(f'  ✓ 도착 확인: {fname} ({actual} B)')
+                        self._emit_progress()
+                        continue
+                    # 파일이 아직 없으면 — DB 상태로 빠른 실패만 체크
+                    db_status = self._db_status(Model, info['db_id'])
+                    if db_status and db_status.startswith(COPY_FAIL_PREFIX):
+                        pending.pop(fname)
+                        self._progress['batch_failed'] += 1
+                        self._log(f'  ✗ 실패 ({db_status}): {fname}', 'ERROR')
+                        self._emit_progress()
+
             if not pending:
                 break
             if not self._interruptible_sleep(interval):
@@ -395,29 +457,18 @@ class ModuleMain(PluginModuleBase):
         if pending:
             for fname in pending:
                 self._progress['batch_failed'] += 1
-                self._log(f'  ✗ 타임아웃: {fname}', 'ERROR')
+                self._log(f'  ✗ 타임아웃 (드라이브 미도착): {fname}', 'ERROR')
             self._emit_progress()
 
-    # ── 단일 요청 상태 질의 (DB 우선, 실패 시 lsjson 폴백) ────────
-    def _query_status(self, Model, filename, db_id):
-        if Model is not None:
-            try:
-                item = Model.get_by_id(int(db_id))
-                if item is not None:
-                    return item.status
-            except Exception as e:
-                self._log(f'status 조회 오류 (id={db_id}): {e}', 'WARN')
-        # 폴백: 내 드라이브에 파일이 보이면 완료로 간주
+    # ── DB 상태 조회 (실패 감지용 보조) ───────────────────────────
+    def _db_status(self, Model, db_id):
+        if Model is None or db_id is None:
+            return None
         try:
-            from support.expand.rclone import SupportRclone
-            remote = P.ModelSetting.get('main_gdrive_remote')
-            file_list = SupportRclone.lsjson(remote) or []
-            if any(f.get('Name') == filename and not f.get('IsDir', False)
-                   for f in file_list):
-                return COPY_DONE_STATUS
-        except Exception as e:
-            self._log(f'lsjson 폴백 오류: {e}', 'WARN')
-        return None
+            item = Model.get_by_id(int(db_id))
+            return item.status if item is not None else None
+        except Exception:
+            return None
 
     # ── NAS rclone 실행 ───────────────────────────────────────────
     def _run_nas_move(self, bi):
@@ -451,6 +502,7 @@ class ModuleMain(PluginModuleBase):
                     'main_nas_ip', 'main_nas_port', 'main_nas_user',
                     'main_script_path', 'main_gdrive_remote',
                     'main_max_batch_gb', 'main_poll_interval', 'main_copy_timeout',
+                    'main_recursive',
                 ]
                 for key in fields:
                     val = req.form.get(key, '')
