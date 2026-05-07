@@ -1,458 +1,148 @@
-{% extends 'base.html' %}
+{% extends "base.html" %}
 {% block content %}
-<style>
-:root {
-  --bg0: #11111b;
-  --bg1: #1e1e2e;
-  --bg2: #181825;
-  --bg3: #313244;
-  --bg4: #45475a;
-  --fg:  #cdd6f4;
-  --fg2: #a6adc8;
-  --fg3: #585b70;
-  --blue:   #89b4fa;
-  --green:  #a6e3a1;
-  --yellow: #f9e2af;
-  --red:    #f38ba8;
-  --teal:   #94e2d5;
-  --mauve:  #cba6f7;
-}
 
-body { background: var(--bg0); color: var(--fg); }
+{{ macros.m_button_group([['globalSettingSaveBtn', '설정 저장']])}}
+{{ macros.m_row_start('5') }}
+{{ macros.m_row_end() }}
+{{ macros.m_hr() }}
 
-.gct-card {
-  background: var(--bg1);
-  border: 1px solid var(--bg3);
-  border-radius: 10px;
-  padding: 20px 24px;
-  margin-bottom: 16px;
-}
-.gct-card h5 {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: .6px;
-  color: var(--blue);
-  text-transform: uppercase;
-  margin-bottom: 16px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--bg3);
-}
+<form id="setting">
+  <h5>NAS 연결</h5>
+  {{ macros.setting_input_text('main_nas_ip', 'NAS IP', value=arg['main_nas_ip'], placeholder='192.168.1.xxx') }}
+  {{ macros.setting_input_int('main_nas_port', 'SSH Port', value=arg['main_nas_port']) }}
+  {{ macros.setting_input_text('main_nas_user', 'SSH User', value=arg['main_nas_user']) }}
+  {{ macros.setting_input_text('tmp_main_nas_password', 'SSH Password', value='', type='password', placeholder='변경 시만 입력', desc=['공란이면 기존 비밀번호 유지. 입력 시 암호화되어 저장됩니다.']) }}
+  {{ macros.setting_input_text_and_buttons('main_script_path', 'rclone_move.sh 경로', [['ssh_test_btn', 'SSH 테스트']], value=arg['main_script_path']) }}
+  {{ macros.setting_input_text('main_gdrive_remote', '내 드라이브 Remote', value=arg['main_gdrive_remote'], desc=['gds_tool 이 파일을 복사할 대상. 예: GDG:/Downloads']) }}
 
-.form-label { font-size: 11px; color: var(--fg3); margin-bottom: 4px; letter-spacing: .3px; }
-.form-control, .form-control:focus {
-  background: var(--bg2);
-  border: 1px solid var(--bg3);
-  color: var(--fg);
-  font-size: 13px;
-  border-radius: 6px;
-}
-.form-control:focus {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 2px rgba(137,180,250,.12);
-}
-.form-control::placeholder { color: var(--fg3); }
+  {{ macros.m_hr() }}
+  <h5>배치 정책</h5>
+  {{ macros.setting_input_text('main_max_batch_gb', '배치당 최대 용량 (GB)', value=arg['main_max_batch_gb'], desc=['내 드라이브 여유 용량보다 작게 설정.']) }}
+  {{ macros.setting_input_int('main_poll_interval', '도착 polling 간격 (초)', value=arg['main_poll_interval']) }}
+  {{ macros.setting_input_int('main_copy_timeout', '배치 복사 타임아웃 (초)', value=arg['main_copy_timeout']) }}
+  {{ macros.setting_checkbox('main_recursive', '하위 폴더 재귀 처리', value=arg['main_recursive'], desc=['ON 시 모든 하위 폴더의 비디오 파일까지 처리. 동일 파일명 충돌 주의.']) }}
+</form>
 
-.btn { border-radius: 6px; font-size: 12px; font-weight: 600; padding: 5px 14px; border: none; }
-.btn-blue   { background: var(--blue);   color: var(--bg0); }
-.btn-blue:hover   { background: var(--teal); color: var(--bg0); }
-.btn-green  { background: var(--green);  color: var(--bg0); }
-.btn-green:hover  { background: #b9f7b5; color: var(--bg0); }
-.btn-red    { background: var(--red);    color: var(--bg0); }
-.btn-red:hover    { background: #fbb8c8; color: var(--bg0); }
-.btn-gray   { background: var(--bg4);    color: var(--fg2); }
-.btn-gray:hover   { background: var(--fg3); color: var(--fg); }
+{{ macros.m_hr() }}
 
-.stat-row { display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
-.stat-box {
-  flex: 1;
-  min-width: 110px;
-  background: var(--bg2);
-  border: 1px solid var(--bg3);
-  border-radius: 8px;
-  padding: 12px;
-  text-align: center;
-}
-.stat-num { font-size: 26px; font-weight: 700; line-height: 1; }
-.stat-lbl { font-size: 10px; color: var(--fg3); margin-top: 4px; letter-spacing: .4px; text-transform: uppercase; }
+<h5>배치 실행</h5>
+{{ macros.setting_input_text_and_buttons('batch_folder_id', '공유드라이브 폴더 ID',
+    [['preview_btn', '미리보기'], ['start_btn', '배치 시작'], ['stop_btn', '배치 중단']],
+    placeholder='공유드라이브 폴더 ID', value='') }}
 
-.gct-progress { background: var(--bg3); border-radius: 4px; height: 6px; overflow: hidden; margin-bottom: 6px; }
-.gct-progress-bar {
-  height: 100%;
-  border-radius: 4px;
-  transition: width .5s ease;
-}
-.gct-progress-bar.overall { background: linear-gradient(90deg, var(--blue), var(--teal)); }
-.gct-progress-bar.batch   { background: linear-gradient(90deg, var(--mauve), var(--blue)); }
-
-.badge-run  { background: var(--green);  color: var(--bg0); font-size: 10px; padding: 2px 9px; border-radius: 10px; font-weight: 700; }
-.badge-idle { background: var(--bg4);    color: var(--fg2); font-size: 10px; padding: 2px 9px; border-radius: 10px; font-weight: 700; }
-.phase-tag {
-  display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 8px;
-  margin-left: 6px; font-weight: 600;
-}
-.phase-copy { background: var(--blue);   color: var(--bg0); }
-.phase-wait { background: var(--yellow); color: var(--bg0); }
-.phase-nas  { background: var(--mauve);  color: var(--bg0); }
-
-#log-box {
-  background: var(--bg0);
-  border: 1px solid var(--bg3);
-  border-radius: 8px;
-  font-family: 'Courier New', monospace;
-  font-size: 11.5px;
-  height: 360px;
-  overflow-y: auto;
-  padding: 12px 14px;
-  line-height: 1.6;
-}
-.log-INFO  { color: var(--fg2); }
-.log-WARN  { color: var(--yellow); }
-.log-ERROR { color: var(--red); }
-
-.gct-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.gct-table th {
-  background: var(--bg2);
-  color: var(--blue);
-  font-size: 11px;
-  letter-spacing: .4px;
-  text-transform: uppercase;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--bg3);
-  text-align: left;
-}
-.gct-table td {
-  color: var(--fg2);
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--bg3);
-  vertical-align: middle;
-}
-.gct-table tr:last-child td { border-bottom: none; }
-.gct-table-wrap {
-  background: var(--bg0);
-  border: 1px solid var(--bg3);
-  border-radius: 8px;
-  overflow: hidden;
-  max-height: 280px;
-  overflow-y: auto;
-}
-</style>
-
-<div class="container-fluid py-3" style="max-width:980px;">
-
-  <!-- ① NAS 설정 -->
-  <div class="gct-card">
-    <h5>⚙ NAS 연결 설정</h5>
-    <div class="row g-3">
-      <div class="col-md-4">
-        <label class="form-label">NAS IP</label>
-        <input type="text" class="form-control" id="main_nas_ip"
-               value="{{arg['main_nas_ip']}}" placeholder="192.168.1.xxx">
+<div id="batch-status" class="mt-3" style="display:none;">
+  <div class="card">
+    <div class="card-body py-2">
+      <div>
+        <strong>진행 상태</strong>
+        <span id="badge-status" class="badge bg-secondary ms-2">대기중</span>
+        <span id="phase-tag" class="badge bg-info ms-1" style="display:none;"></span>
       </div>
-      <div class="col-md-2">
-        <label class="form-label">SSH Port</label>
-        <input type="number" class="form-control" id="main_nas_port"
-               value="{{arg['main_nas_port'] or '22'}}">
+      <div class="mt-1" style="font-size:13px;">
+        총 파일 <strong id="stat-total">0</strong>
+        / 배치 <strong id="stat-batches">0/0</strong>
+        / 현재배치 <strong id="stat-batch-done">0/0</strong>
+        / 완료 <strong id="stat-overall-done" class="text-success">0</strong>
+        / 실패 <strong id="stat-overall-failed" class="text-danger">0</strong>
       </div>
-      <div class="col-md-3">
-        <label class="form-label">SSH User</label>
-        <input type="text" class="form-control" id="main_nas_user"
-               value="{{arg['main_nas_user']}}" placeholder="admin">
-      </div>
-      <div class="col-md-3">
-        <label class="form-label">SSH Password <span style="color:var(--fg3)">(변경 시만)</span></label>
-        <input type="password" class="form-control" id="main_nas_password_plain" placeholder="••••••••">
-      </div>
-      <div class="col-md-6">
-        <label class="form-label">rclone_move.sh 경로</label>
-        <input type="text" class="form-control" id="main_script_path"
-               value="{{arg['main_script_path'] or '/volume1/MK/rclone_move.sh'}}">
-      </div>
-      <div class="col-md-6">
-        <label class="form-label">내 드라이브 Remote (gds_tool 복사 대상)</label>
-        <input type="text" class="form-control" id="main_gdrive_remote"
-               value="{{arg['main_gdrive_remote'] or 'GDG:/Downloads'}}">
-      </div>
-    </div>
-    <div class="mt-3 d-flex gap-2 flex-wrap">
-      <button class="btn btn-blue" onclick="saveSetting()">💾 저장</button>
-      <button class="btn btn-gray" onclick="testSSH()">🔌 SSH 연결 테스트</button>
+      <div id="current-file" class="text-muted mt-1" style="font-size:12px; min-height:18px;"></div>
     </div>
   </div>
-
-  <!-- ② 배치 정책 -->
-  <div class="gct-card">
-    <h5>📦 배치 정책</h5>
-    <div class="row g-3">
-      <div class="col-md-3">
-        <label class="form-label">배치당 최대 용량 (GB) <span style="color:var(--fg3)">— 내 드라이브 여유 용량</span></label>
-        <input type="number" step="0.1" class="form-control" id="main_max_batch_gb"
-               value="{{arg['main_max_batch_gb'] or '10'}}">
-      </div>
-      <div class="col-md-3">
-        <label class="form-label">완료 polling 간격 (초)</label>
-        <input type="number" class="form-control" id="main_poll_interval"
-               value="{{arg['main_poll_interval'] or '15'}}">
-      </div>
-      <div class="col-md-3">
-        <label class="form-label">배치 복사 타임아웃 (초)</label>
-        <input type="number" class="form-control" id="main_copy_timeout"
-               value="{{arg['main_copy_timeout'] or '7200'}}">
-      </div>
-      <div class="col-md-3">
-        <label class="form-label">하위 폴더 재귀 처리</label>
-        <select class="form-control" id="main_recursive">
-          <option value="False" {% if (arg['main_recursive'] or 'False') == 'False' %}selected{% endif %}>OFF — 폴더 직속 파일만</option>
-          <option value="True"  {% if  arg['main_recursive'] == 'True'  %}selected{% endif %}>ON — 모든 하위 포함</option>
-        </select>
-      </div>
-    </div>
-    <div class="mt-2" style="font-size:11px; color:var(--fg3); line-height:1.5;">
-      파일들을 배치당 최대 용량 이하로 묶어 순차 처리합니다.
-      각 배치: gds_tool로 내 드라이브에 복사 → 모두 완료될 때까지 대기 → NAS rclone 이동 → 다음 배치.
-      단일 파일이 최대 용량을 초과하면 단독 배치로 처리합니다.
-      재귀 ON 시 동일 파일명이 여러 하위 폴더에 있으면 내 드라이브에서 덮어쓸 수 있으니 로그를 확인하세요.
-    </div>
-  </div>
-
-  <!-- ③ 배치 실행 -->
-  <div class="gct-card">
-    <h5>🚀 배치 실행</h5>
-    <div class="row g-3 align-items-end">
-      <div class="col-md-7">
-        <label class="form-label">공유드라이브 폴더 ID</label>
-        <input type="text" class="form-control" id="batch_folder_id"
-               placeholder="1KUXnRGTMm0z9HcotQxuhCmMi_PubKjOO">
-      </div>
-      <div class="col-md-5 d-flex gap-2 flex-wrap">
-        <button class="btn btn-gray" onclick="previewFiles()">🔍 미리보기</button>
-        <button class="btn btn-green" id="btn-start" onclick="startBatch()">▶ 배치 시작</button>
-        <button class="btn btn-red"   id="btn-stop"  onclick="stopBatch()" disabled>⏹ 중단</button>
-      </div>
-    </div>
-
-    <div id="preview-wrap" class="mt-3" style="display:none;">
-      <div class="gct-table-wrap">
-        <table class="gct-table">
-          <thead>
-            <tr><th>#</th><th>파일명</th><th>크기</th><th>MimeType</th></tr>
-          </thead>
-          <tbody id="preview-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <!-- ④ 진행 상태 -->
-  <div class="gct-card" id="progress-wrap" style="display:none;">
-    <h5>
-      📊 진행 상태
-      <span id="badge-status" class="badge-idle ms-2">대기중</span>
-      <span id="phase-tag" style="display:none;"></span>
-    </h5>
-
-    <div class="stat-row">
-      <div class="stat-box">
-        <div class="stat-num" id="stat-batches" style="color:var(--mauve)">0/0</div>
-        <div class="stat-lbl">배치</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-num" id="stat-batch-done" style="color:var(--blue)">0/0</div>
-        <div class="stat-lbl">현재 배치</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-num" id="stat-overall-done" style="color:var(--green)">0</div>
-        <div class="stat-lbl">전체 완료</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-num" id="stat-overall-failed" style="color:var(--red)">0</div>
-        <div class="stat-lbl">전체 실패</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-num" id="stat-total" style="color:var(--fg)">0</div>
-        <div class="stat-lbl">총 파일</div>
-      </div>
-    </div>
-
-    <div style="font-size:10px; color:var(--fg3); margin-bottom:2px;">전체 진행률</div>
-    <div class="gct-progress">
-      <div class="gct-progress-bar overall" id="bar-overall" style="width:0%"></div>
-    </div>
-    <div style="font-size:10px; color:var(--fg3); margin: 6px 0 2px;">현재 배치 진행률</div>
-    <div class="gct-progress">
-      <div class="gct-progress-bar batch" id="bar-batch" style="width:0%"></div>
-    </div>
-    <div id="current-file" style="font-size:12px; color:var(--fg3); min-height:18px; margin-top:6px;"></div>
-  </div>
-
-  <!-- ⑤ 로그 -->
-  <div class="gct-card">
-    <div class="d-flex justify-content-between align-items-center mb-2">
-      <h5 class="mb-0">📋 로그</h5>
-      <button class="btn btn-gray btn-sm" onclick="clearLog()">🗑 지우기</button>
-    </div>
-    <div id="log-box"></div>
-  </div>
-
 </div>
+
+<h5 class="mt-3">로그 <button id="log_clear_btn" class="btn btn-sm btn-outline-secondary float-end">지우기</button></h5>
+<div id="log-box" style="background:#1e1e1e; color:#ddd; font-family:monospace; font-size:11.5px; height:320px; overflow-y:auto; padding:10px; border-radius:4px; line-height:1.6;"></div>
 
 <script>
 var socket = io.connect('/framework');
 
-socket.on('gds_tool2_log', function(d) {
-  appendLog(d.ts, d.level, d.msg);
-});
-socket.on('gds_tool2_progress', function(d) {
-  updateProgress(d);
-});
+socket.on('gds_tool2_log', function(d) { appendLog(d.ts, d.level, d.msg); });
+socket.on('gds_tool2_progress', function(d) { updateProgress(d); });
 socket.on('gds_tool2_done', function(d) {
   updateProgress(d);
   setBadge(false);
-  setButtons(false);
   setPhase('');
   appendLog(now(), 'INFO', '배치 작업 종료');
 });
+socket.on('connect', function() { refreshStatus(); });
 
-// 소켓 재연결 시 서버 상태 재동기화 (이벤트 누락 방지)
-socket.on('connect', function() {
-  refreshStatus();
+$("body").on('click', '#ssh_test_btn', function(e) {
+  e.preventDefault();
+  globalSendCommand('test_ssh', '', '', '');
 });
 
-function saveSetting() {
-  var data = {
-    main_nas_ip:             $('#main_nas_ip').val(),
-    main_nas_port:           $('#main_nas_port').val(),
-    main_nas_user:           $('#main_nas_user').val(),
-    main_nas_password_plain: $('#main_nas_password_plain').val(),
-    main_script_path:        $('#main_script_path').val(),
-    main_gdrive_remote:      $('#main_gdrive_remote').val(),
-    main_max_batch_gb:       $('#main_max_batch_gb').val(),
-    main_poll_interval:      $('#main_poll_interval').val(),
-    main_copy_timeout:       $('#main_copy_timeout').val(),
-    main_recursive:          $('#main_recursive').val(),
-  };
-  command('save_setting', '', '', '', data, function(ret) {
-    alert(ret.msg);
-    if (ret.ret === 'success') $('#main_nas_password_plain').val('');
-  });
-}
-
-function testSSH() {
-  appendLog(now(), 'INFO', 'SSH 연결 테스트 중...');
-  command('test_ssh', '', '', '', {}, function(ret) {
-    appendLog(now(), ret.ret === 'success' ? 'INFO' : 'ERROR', ret.msg);
-    alert(ret.msg);
-  });
-}
-
-function previewFiles() {
+$("body").on('click', '#preview_btn', function(e) {
+  e.preventDefault();
   var fid = $('#batch_folder_id').val().trim();
   if (!fid) { alert('폴더 ID를 입력하세요.'); return; }
-  command('preview_files', fid, '', '', {}, function(ret) {
-    if (ret.ret !== 'success') { alert(ret.msg); return; }
-    var tbody = $('#preview-tbody').empty();
-    var files = ret.files || [];
-    if (files.length === 0) {
-      tbody.append('<tr><td colspan="4" style="text-align:center;color:var(--fg3)">비디오 파일 없음</td></tr>');
-    } else {
-      files.forEach(function(f, i) {
-        var mb = f.Size > 0 ? (f.Size / 1024 / 1024).toFixed(0) + ' MB' : '-';
-        tbody.append('<tr><td>' + (i+1) + '</td><td>' + escHtml(f.Name) + '</td><td>' + mb + '</td><td>' + (f.MimeType || '') + '</td></tr>');
-      });
-    }
-    $('#preview-wrap').show();
-    alert(ret.msg);
-  });
-}
+  globalSendCommand('preview_files', fid, '', '');
+});
 
-function startBatch() {
+$("body").on('click', '#start_btn', function(e) {
+  e.preventDefault();
   var fid = $('#batch_folder_id').val().trim();
   if (!fid) { alert('폴더 ID를 입력하세요.'); return; }
-  command('start_batch', fid, '', '', {}, function(ret) {
-    alert(ret.msg);
+  globalSendCommand('start_btn', fid, '', '', function(ret) {
     if (ret.ret === 'success') {
+      $('#batch-status').show();
       setBadge(true);
-      setButtons(true);
-      $('#progress-wrap').show();
     }
   });
-}
+});
 
-function stopBatch() {
-  command('stop_batch', '', '', '', {}, function(ret) { alert(ret.msg); });
-}
+$("body").on('click', '#stop_btn', function(e) {
+  e.preventDefault();
+  globalSendCommand('stop_batch', '', '', '');
+});
+
+$("body").on('click', '#log_clear_btn', function(e) {
+  e.preventDefault();
+  $('#log-box').empty();
+});
 
 function updateProgress(d) {
   if (!d) return;
-  var totalFiles   = d.total_files   || 0;
-  var totalBatches = d.total_batches || 0;
-  var batchIdx     = d.batch_index   || 0;
-  var batchFiles   = d.batch_files   || 0;
-  var batchDone    = d.batch_done    || 0;
-  var batchFailed  = d.batch_failed  || 0;
-  var overallDone  = d.overall_done  || 0;
-  var overallFail  = d.overall_failed|| 0;
-
-  $('#stat-batches').text(batchIdx + '/' + totalBatches);
-  $('#stat-batch-done').text((batchDone + batchFailed) + '/' + batchFiles);
-  $('#stat-overall-done').text(overallDone);
-  $('#stat-overall-failed').text(overallFail);
-  $('#stat-total').text(totalFiles);
-
-  var overallPct = totalFiles > 0
-    ? Math.round((overallDone + overallFail) / totalFiles * 100) : 0;
-  var batchPct   = batchFiles > 0
-    ? Math.round((batchDone + batchFailed) / batchFiles * 100) : 0;
-  $('#bar-overall').css('width', overallPct + '%');
-  $('#bar-batch').css('width', batchPct + '%');
-
+  $('#stat-total').text(d.total_files || 0);
+  $('#stat-batches').text((d.batch_index || 0) + '/' + (d.total_batches || 0));
+  $('#stat-batch-done').text(((d.batch_done || 0) + (d.batch_failed || 0)) + '/' + (d.batch_files || 0));
+  $('#stat-overall-done').text(d.overall_done || 0);
+  $('#stat-overall-failed').text(d.overall_failed || 0);
+  $('#current-file').text(d.current ? '▸ ' + d.current : '');
   setPhase(d.phase || '');
-  if (d.current) {
-    $('#current-file').text('▸ ' + d.current);
+  $('#batch-status').show();
+}
+
+function setBadge(running) {
+  var b = $('#badge-status');
+  if (running) {
+    b.removeClass('bg-secondary').addClass('bg-success').text('실행중');
   } else {
-    $('#current-file').text('');
+    b.removeClass('bg-success').addClass('bg-secondary').text('대기중');
   }
 }
 
-function setBadge(run) {
-  var b = $('#badge-status');
-  b.attr('class', run ? 'badge-run ms-2' : 'badge-idle ms-2').text(run ? '실행중' : '대기중');
-}
-function setButtons(run) {
-  $('#btn-start').prop('disabled', run);
-  $('#btn-stop').prop('disabled', !run);
-}
 function setPhase(p) {
   var t = $('#phase-tag');
   if (!p) { t.hide(); return; }
-  var label = {copy:'복사 요청', wait:'복사 대기', nas:'NAS 이동'}[p] || p;
-  t.attr('class', 'phase-tag phase-' + p).text(label).show();
+  var label = {copy:'복사 요청', wait:'도착 대기', nas:'NAS 이동'}[p] || p;
+  t.text(label).show();
 }
 
 function appendLog(ts, level, msg) {
   var box = document.getElementById('log-box');
   var div = document.createElement('div');
-  div.className = 'log-' + level;
+  div.style.color = level === 'ERROR' ? '#f88' : level === 'WARN' ? '#fd5' : '#bbb';
   div.textContent = '[' + ts + '][' + level + '] ' + msg;
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
 }
-function clearLog() { document.getElementById('log-box').innerHTML = ''; }
 function now() { return new Date().toTimeString().slice(0,8); }
-function escHtml(s) {
-  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
 
 function refreshStatus() {
-  command('get_status', '', '', '', {}, function(ret) {
+  globalSendCommand('get_status', '', '', '', function(ret) {
     if (!ret || ret.ret !== 'success') return;
-    if (ret.is_running) {
-      setBadge(true);
-      setButtons(true);
-      $('#progress-wrap').show();
-    } else {
-      setBadge(false);
-      setButtons(false);
-    }
+    setBadge(!!ret.is_running);
+    if (ret.is_running) $('#batch-status').show();
     if (ret.progress) updateProgress(ret.progress);
     if (ret.logs && ret.logs.length) {
       $('#log-box').empty();
@@ -461,8 +151,6 @@ function refreshStatus() {
   });
 }
 
-$(document).ready(function() {
-  refreshStatus();
-});
+$(document).ready(function() { refreshStatus(); });
 </script>
 {% endblock %}
