@@ -18,6 +18,7 @@
   {{ macros.m_hr() }}
   <h5>배치 정책</h5>
   {{ macros.setting_input_text('main_max_batch_gb', '배치당 최대 용량 (GB)', value=arg['main_max_batch_gb'], desc=['내 드라이브 여유 용량보다 작게 설정.']) }}
+  {{ macros.setting_input_int('main_max_batch_files', '배치당 최대 파일 수', value=arg['main_max_batch_files'], desc=['rclone_move.sh 가 한 번에 처리하는 파일 수에 맞춤. 0=제한 없음.']) }}
   {{ macros.setting_input_int('main_poll_interval', '도착 polling 간격 (초)', value=arg['main_poll_interval']) }}
   {{ macros.setting_input_int('main_copy_timeout', '배치 복사 타임아웃 (초)', value=arg['main_copy_timeout']) }}
   {{ macros.setting_checkbox('main_recursive', '하위 폴더 재귀 처리', value=arg['main_recursive'], desc=['ON 시 모든 하위 폴더의 비디오 파일까지 처리. 동일 파일명 충돌 주의.']) }}

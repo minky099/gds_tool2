@@ -41,6 +41,7 @@ class ModuleMain(PluginModuleBase):
             'main_script_path':      '/volume1/MK/rclone_move.sh',
             'main_gdrive_remote':    'GDG:/Downloads',
             'main_max_batch_gb':     str(DEFAULT_BATCH_GB),    # 배치당 최대 용량 (GB)
+            'main_max_batch_files':  '4',                      # 배치당 최대 파일 수
             'main_poll_interval':    '15',                     # status polling 간격 (초)
             'main_copy_timeout':     '7200',                   # 배치 복사 타임아웃 (초)
             'main_recursive':        'False',                  # 하위 폴더 재귀 처리
@@ -241,10 +242,11 @@ class ModuleMain(PluginModuleBase):
 
     # ── 배치 그룹핑 (greedy first-fit) ────────────────────────────
     @staticmethod
-    def _pack_batches(files, max_bytes):
+    def _pack_batches(files, max_bytes, max_count=0):
         """파일 리스트를 배치로 묶는다.
-        - 단일 파일이 max_bytes를 초과하면 단독 배치로 묶고 경고 마킹.
-        - 그 외는 합이 max_bytes를 넘지 않는 선에서 순서대로 채움.
+        - 단일 파일이 max_bytes를 초과하면 단독 배치.
+        - 그 외는 합이 max_bytes를 넘지 않고 개수가 max_count를 넘지 않게 채움.
+        - max_count <= 0 이면 개수 제한 없음.
         """
         batches = []
         current = []
@@ -257,7 +259,9 @@ class ModuleMain(PluginModuleBase):
                     current, current_size = [], 0
                 batches.append([f])  # 단독
                 continue
-            if current_size + size > max_bytes and current:
+            count_full = max_count > 0 and len(current) >= max_count
+            size_full  = current_size + size > max_bytes
+            if (count_full or size_full) and current:
                 batches.append(current)
                 current, current_size = [], 0
             current.append(f)
@@ -281,6 +285,10 @@ class ModuleMain(PluginModuleBase):
                 max_gb = float(P.ModelSetting.get('main_max_batch_gb') or DEFAULT_BATCH_GB)
             except ValueError:
                 max_gb = DEFAULT_BATCH_GB
+            try:
+                max_count = int(P.ModelSetting.get('main_max_batch_files') or 0)
+            except ValueError:
+                max_count = 0
             max_bytes = int(max_gb * GIB)
 
             self._history_id = self._history_create(folder_id, max_gb)
@@ -300,7 +308,7 @@ class ModuleMain(PluginModuleBase):
                 final_note   = '비디오 없음'
                 return
 
-            batches = self._pack_batches(files, max_bytes)
+            batches = self._pack_batches(files, max_bytes, max_count)
             total_files   = sum(len(b) for b in batches)
             total_batches = len(batches)
 
@@ -312,9 +320,10 @@ class ModuleMain(PluginModuleBase):
                 total_batches=total_batches,
             )
 
+            cap_desc = f'≤{max_gb:g} GB' + (f', ≤{max_count}개' if max_count > 0 else '')
             self._log(
                 f'총 {total_files}개 파일 → {total_batches}개 배치 '
-                f'(배치당 최대 {max_gb:g} GB)'
+                f'(배치당 {cap_desc})'
             )
 
             for bi, batch in enumerate(batches, start=1):
@@ -642,14 +651,19 @@ class ModuleMain(PluginModuleBase):
                         max_gb = float(P.ModelSetting.get('main_max_batch_gb') or DEFAULT_BATCH_GB)
                     except ValueError:
                         max_gb = DEFAULT_BATCH_GB
-                    batches = self._pack_batches(files, int(max_gb * GIB))
+                    try:
+                        max_count = int(P.ModelSetting.get('main_max_batch_files') or 0)
+                    except ValueError:
+                        max_count = 0
+                    batches = self._pack_batches(files, int(max_gb * GIB), max_count)
                     ret['files']         = files
                     ret['batches_count'] = len(batches)
                     ret['total_size']    = sum((f.get('Size', 0) or 0) for f in files)
+                    cap_desc = f'≤{max_gb:g} GB' + (f', ≤{max_count}개' if max_count > 0 else '')
                     ret['msg'] = (
                         f'{len(files)}개 비디오 / '
                         f'{ret["total_size"]/GIB:.2f} GB / '
-                        f'{len(batches)}개 배치 (배치당 ≤ {max_gb:g} GB)'
+                        f'{len(batches)}개 배치 (배치당 {cap_desc})'
                     )
 
             elif command == 'start_batch':
