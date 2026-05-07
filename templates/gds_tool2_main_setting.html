@@ -12,14 +12,16 @@
   {{ macros.setting_input_int('main_nas_port', 'SSH Port', value=arg['main_nas_port']) }}
   {{ macros.setting_input_text('main_nas_user', 'SSH User', value=arg['main_nas_user']) }}
   {{ macros.setting_input_text('tmp_main_nas_password', 'SSH Password', value='', type='password', placeholder='변경 시만 입력', desc=['공란이면 기존 비밀번호 유지. 입력 시 암호화되어 저장됩니다.']) }}
-  {{ macros.setting_input_text_and_buttons('main_script_path', 'rclone_move.sh 경로', [['ssh_test_btn', 'SSH 테스트']], value=arg['main_script_path']) }}
+  {{ macros.setting_input_text_and_buttons('main_script_path', 'NAS 스크립트 경로', [['ssh_test_btn', 'SSH 테스트']], value=arg['main_script_path'], desc=['파일 1개씩 받는 rclone_move_one.sh. 인자: <filename> <streams>']) }}
   {{ macros.setting_input_text('main_gdrive_remote', '내 드라이브 Remote', value=arg['main_gdrive_remote'], desc=['gds_tool 이 파일을 복사할 대상. 예: GDG:/Downloads']) }}
 
   {{ macros.m_hr() }}
-  <h5>배치 정책</h5>
-  {{ macros.setting_input_text('main_max_batch_gb', '배치당 최대 용량 (GB)', value=arg['main_max_batch_gb'], desc=['내 드라이브 여유 용량보다 작게 설정. 배치당 최대 4개 파일 한도가 별도로 적용됨.']) }}
+  <h5>파이프라인 정책</h5>
+  {{ macros.setting_input_text('main_max_batch_gb', '동시 in-flight 최대 (GB)', value=arg['main_max_batch_gb'], desc=['내 드라이브에 동시에 존재할 수 있는 파일들의 합계 상한. 여유 용량보다 작게.']) }}
+  {{ macros.setting_input_int('main_concurrent_moves', '동시 NAS 이동 수', value=arg['main_concurrent_moves'], desc=['병렬로 돌릴 rclone 개수. NAS CPU/메모리 여유에 맞춰.']) }}
+  {{ macros.setting_input_int('main_multi_thread_streams', '파일당 스트림 수', value=arg['main_multi_thread_streams'], desc=['rclone --multi-thread-streams. 큰 파일 1개를 N스트림으로 받음.']) }}
   {{ macros.setting_input_int('main_poll_interval', '도착 polling 간격 (초)', value=arg['main_poll_interval']) }}
-  {{ macros.setting_input_int('main_copy_timeout', '배치 복사 타임아웃 (초)', value=arg['main_copy_timeout']) }}
+  {{ macros.setting_input_int('main_copy_timeout', '파일별 도착 타임아웃 (초)', value=arg['main_copy_timeout']) }}
   {{ macros.setting_checkbox('main_recursive', '하위 폴더 재귀 처리', value=arg['main_recursive'], desc=['ON 시 모든 하위 폴더의 파일까지 처리. 동일 파일명 충돌 주의.']) }}
 </form>
 
@@ -39,11 +41,12 @@
         <span id="phase-tag" class="ms-2" style="display:none; font-weight:600;"></span>
       </div>
       <div class="mt-1" style="font-size:13px;">
-        총 파일 <strong id="stat-total">0</strong>
-        / 배치 <strong id="stat-batches">0/0</strong>
-        / 현재배치 <strong id="stat-batch-done">0/0</strong>
-        / 완료 <strong id="stat-overall-done" class="text-success">0</strong>
-        / 실패 <strong id="stat-overall-failed" class="text-danger">0</strong>
+        총 <strong id="stat-total">0</strong>
+        / 도착 <strong id="stat-arrived" class="text-info">0</strong>
+        / 이동완료 <strong id="stat-moved" class="text-success">0</strong>
+        / 실패 <strong id="stat-failed" class="text-danger">0</strong>
+        / in-flight <strong id="stat-inflight">0</strong>
+        (<span id="stat-inflight-bytes">0</span> GB)
       </div>
       <div id="current-file" class="text-muted mt-1" style="font-size:12px; min-height:18px;"></div>
     </div>
@@ -105,12 +108,21 @@ $("body").on('click', '#log_clear_btn', function(e) {
 
 function updateProgress(d) {
   if (!d) return;
-  $('#stat-total').text(d.total_files || 0);
-  $('#stat-batches').text((d.batch_index || 0) + '/' + (d.total_batches || 0));
-  $('#stat-batch-done').text(((d.batch_done || 0) + (d.batch_failed || 0)) + '/' + (d.batch_files || 0));
-  $('#stat-overall-done').text(d.overall_done || 0);
-  $('#stat-overall-failed').text(d.overall_failed || 0);
-  $('#current-file').text(d.current ? '▸ ' + d.current : '');
+  $('#stat-total').text(d.total || 0);
+  $('#stat-arrived').text(d.arrived || 0);
+  $('#stat-moved').text(d.moved || 0);
+  $('#stat-failed').text(d.failed || 0);
+  var inFlight = d.in_flight || [];
+  $('#stat-inflight').text(inFlight.length);
+  var gib = (d.in_flight_bytes || 0) / (1024*1024*1024);
+  $('#stat-inflight-bytes').text(gib.toFixed(2));
+  if (inFlight.length === 0) {
+    $('#current-file').text('');
+  } else {
+    var preview = inFlight.slice(0, 4).join(', ');
+    if (inFlight.length > 4) preview += ' 외 ' + (inFlight.length - 4);
+    $('#current-file').text('▸ ' + preview);
+  }
   setPhase(d.phase || '');
   $('#batch-status').show();
 }
@@ -127,9 +139,8 @@ function setBadge(running) {
 function setPhase(p) {
   var t = $('#phase-tag');
   if (!p) { t.hide(); return; }
-  var label = {copy:'복사 요청', wait:'도착 대기', nas:'NAS 이동'}[p] || p;
-  var color = {copy:'#0d6efd', wait:'#fd7e14', nas:'#6f42c1'}[p] || '#495057';
-  t.text('[ ' + label + ' ]').css('color', color).show();
+  var label = {pipeline:'파이프라인 가동중'}[p] || p;
+  t.text('[ ' + label + ' ]').css('color', '#0d6efd').show();
 }
 
 function appendLog(ts, level, msg) {
