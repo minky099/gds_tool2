@@ -24,6 +24,8 @@ setting = {
     'default_route': 'normal',
 }
 
+import traceback
+
 from plugin import *
 
 P = create_plugin_instance(setting)
