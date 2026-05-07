@@ -44,7 +44,9 @@ class ModuleMain(PluginModuleBase):
             'main_poll_interval':    '15',                     # status polling 간격 (초)
             'main_copy_timeout':     '7200',                   # 배치 복사 타임아웃 (초)
             'main_recursive':        'False',                  # 하위 폴더 재귀 처리
+            'main_last_source_id':   '',                       # 마지막으로 실행한 폴더 ID
         }
+        self._history_id  = None
         self._lock        = threading.Lock()
         self._is_running  = False
         self._stop_flag   = False
@@ -266,6 +268,8 @@ class ModuleMain(PluginModuleBase):
 
     # ── 배치 워커 (스레드) ────────────────────────────────────────
     def _batch_worker(self, folder_id):
+        final_status = 'completed'
+        final_note   = ''
         try:
             with self._lock:
                 self._is_running = True
@@ -273,22 +277,28 @@ class ModuleMain(PluginModuleBase):
                 self._logs       = []
                 self._progress   = self._fresh_progress()
 
+            try:
+                max_gb = float(P.ModelSetting.get('main_max_batch_gb') or DEFAULT_BATCH_GB)
+            except ValueError:
+                max_gb = DEFAULT_BATCH_GB
+            max_bytes = int(max_gb * GIB)
+
+            self._history_id = self._history_create(folder_id, max_gb)
+
             self._log('SSH 연결 테스트...')
             if not self._test_ssh():
                 self._log('SSH 연결 실패. 배치 중단.', 'ERROR')
+                final_status = 'error'
+                final_note   = 'SSH 연결 실패'
                 return
 
             self._log(f'공유드라이브 파일 목록 추출: {folder_id}')
             files = self._get_file_list(folder_id)
             if not files:
                 self._log('처리할 비디오 파일이 없습니다.')
+                final_status = 'completed'
+                final_note   = '비디오 없음'
                 return
-
-            try:
-                max_gb    = float(P.ModelSetting.get('main_max_batch_gb') or DEFAULT_BATCH_GB)
-            except ValueError:
-                max_gb    = DEFAULT_BATCH_GB
-            max_bytes = int(max_gb * GIB)
 
             batches = self._pack_batches(files, max_bytes)
             total_files   = sum(len(b) for b in batches)
@@ -297,6 +307,10 @@ class ModuleMain(PluginModuleBase):
             self._progress['total_files']   = total_files
             self._progress['total_batches'] = total_batches
             self._emit_progress()
+            self._history_update(
+                total_files=total_files,
+                total_batches=total_batches,
+            )
 
             self._log(
                 f'총 {total_files}개 파일 → {total_batches}개 배치 '
@@ -306,8 +320,17 @@ class ModuleMain(PluginModuleBase):
             for bi, batch in enumerate(batches, start=1):
                 if self._stop_flag:
                     self._log('사용자 중단 (배치 시작 전)')
+                    final_status = 'stopped'
                     break
                 self._run_one_batch(bi, total_batches, batch)
+                self._history_update(
+                    success_count=self._progress['overall_done'],
+                    fail_count=self._progress['overall_failed'],
+                )
+            else:
+                if self._progress['overall_failed'] > 0:
+                    final_status = 'completed'
+                    final_note   = f'{self._progress["overall_failed"]}개 실패 포함'
 
             self._log(
                 f'배치 종료 — 성공: {self._progress["overall_done"]}, '
@@ -318,7 +341,10 @@ class ModuleMain(PluginModuleBase):
         except Exception as e:
             self._log(f'배치 예외: {e}', 'ERROR')
             P.logger.error(traceback.format_exc())
+            final_status = 'error'
+            final_note   = str(e)[:200]
         finally:
+            self._history_finalize(final_status, final_note)
             with self._lock:
                 self._is_running = False
             self._progress['current'] = ''
@@ -327,6 +353,57 @@ class ModuleMain(PluginModuleBase):
                 F.socketio.emit('gds_tool2_done', dict(self._progress), namespace='/framework')
             except Exception:
                 pass
+
+    # ── 이력 ──────────────────────────────────────────────────────
+    def _history_model(self):
+        try:
+            return getattr(P, 'ModelBatchHistory', None)
+        except Exception:
+            return None
+
+    def _history_create(self, folder_id, max_gb):
+        Model = self._history_model()
+        if Model is None:
+            return None
+        try:
+            item = Model(folder_id=folder_id, max_batch_gb=str(max_gb))
+            item.save()
+            return item.id
+        except Exception as e:
+            P.logger.error(f'history create exception: {e}')
+            return None
+
+    def _history_update(self, **fields):
+        Model = self._history_model()
+        if Model is None or self._history_id is None:
+            return
+        try:
+            item = Model.get_by_id(self._history_id)
+            if item is None:
+                return
+            for k, v in fields.items():
+                setattr(item, k, v)
+            item.save()
+        except Exception as e:
+            P.logger.error(f'history update exception: {e}')
+
+    def _history_finalize(self, status, note):
+        Model = self._history_model()
+        if Model is None or self._history_id is None:
+            return
+        try:
+            item = Model.get_by_id(self._history_id)
+            if item is None:
+                return
+            item.finished_time  = datetime.now()
+            item.success_count  = self._progress.get('overall_done', 0)
+            item.fail_count     = self._progress.get('overall_failed', 0)
+            item.status         = status
+            if note:
+                item.note = note
+            item.save()
+        except Exception as e:
+            P.logger.error(f'history finalize exception: {e}')
 
     # ── 단일 배치 처리 ────────────────────────────────────────────
     def _run_one_batch(self, bi, total_batches, batch):
@@ -425,31 +502,39 @@ class ModuleMain(PluginModuleBase):
         remote   = P.ModelSetting.get('main_gdrive_remote')
         interval = max(int(P.ModelSetting.get('main_poll_interval') or 15), 3)
         timeout  = int(P.ModelSetting.get('main_copy_timeout')  or 7200)
-        deadline = time.time() + timeout
+        start_t  = time.time()
+        deadline = start_t + timeout
+        total    = len(pending)
 
         self._log(
-            f'배치 [{bi}] 내 드라이브 도착 대기 ({len(pending)}개, '
+            f'배치 [{bi}] 내 드라이브 도착 대기 ({total}개, '
             f'타임아웃 {timeout}s, 기준 remote={remote})'
         )
 
+        round_no = 0
         while pending and time.time() < deadline:
             if self._stop_flag:
                 self._log(f'배치 [{bi}] 대기 중 사용자 중단', 'WARN')
                 return
+            round_no += 1
+            elapsed = int(time.time() - start_t)
 
             # 한 라운드에 lsjson 1회 호출
+            lsjson_err = None
             try:
                 drive_files = SupportRclone.lsjson(remote) or []
             except Exception as e:
-                self._log(f'lsjson 오류 (재시도 예정): {e}', 'WARN')
+                lsjson_err = str(e)
                 drive_files = None
 
+            arrived_this_round = []
             if drive_files is not None:
                 by_name = {
                     f.get('Name'): (f.get('Size', 0) or 0)
                     for f in drive_files
                     if not f.get('IsDir', False)
                 }
+                lsjson_count = len(by_name)
                 for fname, info in list(pending.items()):
                     expected = info['size']
                     actual   = by_name.get(fname)
@@ -457,6 +542,7 @@ class ModuleMain(PluginModuleBase):
                         pending.pop(fname)
                         self._progress['batch_done'] += 1
                         self._progress['current']     = fname
+                        arrived_this_round.append(fname)
                         self._log(f'  ✓ 도착 확인: {fname} ({actual} B)')
                         self._emit_progress()
                         continue
@@ -467,6 +553,26 @@ class ModuleMain(PluginModuleBase):
                         self._progress['batch_failed'] += 1
                         self._log(f'  ✗ 실패 ({db_status}): {fname}', 'ERROR')
                         self._emit_progress()
+            else:
+                lsjson_count = -1
+
+            done    = self._progress['batch_done']
+            failed  = self._progress['batch_failed']
+            waiting = list(pending.keys())
+            preview = ', '.join(waiting[:3]) + (f' 외 {len(waiting)-3}' if len(waiting) > 3 else '')
+
+            if lsjson_err is not None:
+                self._log(
+                    f'  · 라운드 {round_no} ({elapsed}s) lsjson 오류: {lsjson_err} '
+                    f'— 재시도 예정',
+                    'WARN',
+                )
+            else:
+                self._log(
+                    f'  · 라운드 {round_no} ({elapsed}s) lsjson {lsjson_count}개 / '
+                    f'완료 {done}/{total}, 실패 {failed}, 대기 {len(waiting)}'
+                    + (f' [{preview}]' if waiting else '')
+                )
 
             if not pending:
                 break
@@ -560,6 +666,10 @@ class ModuleMain(PluginModuleBase):
                             self._is_running = True
                             self._stop_flag  = False
                     if ret['ret'] == 'success':
+                        try:
+                            P.ModelSetting.set('main_last_source_id', fid)
+                        except Exception:
+                            pass
                         t = threading.Thread(target=self._batch_worker, args=(fid,), daemon=True)
                         t.start()
                         ret['msg'] = '배치 시작!'
@@ -576,6 +686,41 @@ class ModuleMain(PluginModuleBase):
                 ret['progress']   = dict(self._progress)
                 with self._lock:
                     ret['logs']   = self._logs[-LOG_RETURN_TAIL:]
+
+            elif command == 'list_history':
+                Model = self._history_model()
+                if Model is None:
+                    ret['list'] = []
+                else:
+                    try:
+                        items = Model.get_list() or []
+                        items.sort(key=lambda x: x.id, reverse=True)
+                        ret['list'] = [it.as_dict() for it in items[:200]]
+                    except Exception as e:
+                        ret['ret'] = 'error'
+                        ret['msg'] = f'이력 조회 실패: {e}'
+                        ret['list'] = []
+
+            elif command == 'delete_history':
+                Model = self._history_model()
+                if Model is None or not arg1:
+                    ret['ret'] = 'error'
+                    ret['msg'] = '삭제 대상 없음'
+                else:
+                    if Model.delete_by_id(arg1):
+                        ret['msg'] = '삭제 완료'
+                    else:
+                        ret['ret'] = 'error'
+                        ret['msg'] = '삭제 실패'
+
+            elif command == 'clear_history':
+                Model = self._history_model()
+                if Model is None:
+                    ret['ret'] = 'error'
+                    ret['msg'] = '모델 없음'
+                else:
+                    n = Model.delete_all(0)
+                    ret['msg'] = f'{n}건 삭제'
 
         except Exception as e:
             ret['ret'] = 'error'

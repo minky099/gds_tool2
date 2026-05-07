@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h5>작업 이력
+  <span class="float-end">
+    <button id="refresh_btn" class="btn btn-sm btn-outline-secondary">새로고침</button>
+    <button id="clear_btn" class="btn btn-sm btn-outline-danger">전체 삭제</button>
+  </span>
+</h5>
+
+<div class="table-responsive mt-2">
+  <table class="table table-sm table-hover" style="font-size:13px;">
+    <thead>
+      <tr>
+        <th style="width:50px;">ID</th>
+        <th style="width:140px;">시작</th>
+        <th style="width:140px;">종료</th>
+        <th>폴더 ID</th>
+        <th style="width:80px;">배치GB</th>
+        <th style="width:60px;">파일</th>
+        <th style="width:60px;">배치</th>
+        <th style="width:60px;">성공</th>
+        <th style="width:60px;">실패</th>
+        <th style="width:90px;">상태</th>
+        <th>비고</th>
+        <th style="width:60px;"></th>
+      </tr>
+    </thead>
+    <tbody id="history-rows">
+      <tr><td colspan="12" class="text-center text-muted">로딩중...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+function loadHistory() {
+  globalSendCommand('list_history', '', '', '', function(ret) {
+    var rows = ret && ret.list ? ret.list : [];
+    var tbody = $('#history-rows').empty();
+    if (rows.length === 0) {
+      tbody.append('<tr><td colspan="12" class="text-center text-muted">이력 없음</td></tr>');
+      return;
+    }
+    rows.forEach(function(r) {
+      var statusClass = {
+        'completed': 'bg-success',
+        'running':   'bg-primary',
+        'stopped':   'bg-warning text-dark',
+        'error':     'bg-danger'
+      }[r.status] || 'bg-secondary';
+      var $tr = $('<tr>');
+      $tr.append($('<td>').text(r.id));
+      $tr.append($('<td>').text(r.created_time || ''));
+      $tr.append($('<td>').text(r.finished_time || ''));
+      $tr.append($('<td style="word-break:break-all;font-family:monospace;font-size:11.5px;">').text(r.folder_id || ''));
+      $tr.append($('<td>').text(r.max_batch_gb || ''));
+      $tr.append($('<td>').text(r.total_files || 0));
+      $tr.append($('<td>').text(r.total_batches || 0));
+      $tr.append($('<td class="text-success">').text(r.success_count || 0));
+      $tr.append($('<td class="text-danger">').text(r.fail_count || 0));
+      $tr.append($('<td>').html('<span class="badge ' + statusClass + '">' + (r.status || '') + '</span>'));
+      $tr.append($('<td style="font-size:11.5px;">').text(r.note || ''));
+      $tr.append($('<td>').html('<button class="btn btn-sm btn-outline-danger del-btn" data-id="' + r.id + '">삭제</button>'));
+      tbody.append($tr);
+    });
+  });
+}
+
+$("body").on('click', '#refresh_btn', function(e) { e.preventDefault(); loadHistory(); });
+
+$("body").on('click', '#clear_btn', function(e) {
+  e.preventDefault();
+  if (!confirm('이력을 전부 삭제할까요?')) return;
+  globalSendCommand('clear_history', '', '', '', function() { loadHistory(); });
+});
+
+$("body").on('click', '.del-btn', function(e) {
+  e.preventDefault();
+  var id = $(this).data('id');
+  globalSendCommand('delete_history', id, '', '', function() { loadHistory(); });
+});
+
+$(document).ready(loadHistory);
+</script>
+{% endblock %}

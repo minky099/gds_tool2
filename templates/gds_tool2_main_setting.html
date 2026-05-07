@@ -26,9 +26,9 @@
 {{ macros.m_hr() }}
 
 <h5>배치 실행</h5>
-{{ macros.setting_input_text_and_buttons('batch_folder_id', '공유드라이브 폴더 ID',
+{{ macros.setting_input_text_and_buttons('main_last_source_id', '공유드라이브 폴더 ID',
     [['preview_btn', '미리보기'], ['start_btn', '배치 시작'], ['stop_btn', '배치 중단']],
-    placeholder='공유드라이브 폴더 ID', value='') }}
+    placeholder='공유드라이브 폴더 ID', value=arg['main_last_source_id']) }}
 
 <div id="batch-status" class="mt-3" style="display:none;">
   <div class="card">
@@ -73,14 +73,14 @@ $("body").on('click', '#ssh_test_btn', function(e) {
 
 $("body").on('click', '#preview_btn', function(e) {
   e.preventDefault();
-  var fid = $('#batch_folder_id').val().trim();
+  var fid = $('#main_last_source_id').val().trim();
   if (!fid) { alert('폴더 ID를 입력하세요.'); return; }
   globalSendCommand('preview_files', fid, '', '');
 });
 
 $("body").on('click', '#start_btn', function(e) {
   e.preventDefault();
-  var fid = $('#batch_folder_id').val().trim();
+  var fid = $('#main_last_source_id').val().trim();
   if (!fid) { alert('폴더 ID를 입력하세요.'); return; }
   globalSendCommand('start_batch', fid, '', '', function(ret) {
     if (ret.ret === 'success') {

@@ -12,11 +12,8 @@ setting = {
                 'name': '배치 복사',
                 'list': [
                     {'uri': 'setting', 'name': '설정/실행'},
+                    {'uri': 'history', 'name': '작업 이력'},
                 ]
-            },
-            {
-                'uri': 'log',
-                'name': '로그',
             },
         ]
     },
@@ -31,7 +28,9 @@ from plugin import *
 P = create_plugin_instance(setting)
 
 try:
+    from .model import ModelBatchHistory
     from .mod_main import ModuleMain
+    P.ModelBatchHistory = ModelBatchHistory
     P.set_module_list([ModuleMain])
 except Exception as e:
     P.logger.error(f'Exception:{str(e)}')
