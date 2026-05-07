@@ -91,13 +91,13 @@ class ModuleMain(PluginModuleBase):
             if len(self._logs) > LOG_KEEP:
                 self._logs = self._logs[-LOG_KEEP:]
         try:
-            F.socketio.emit('gds_copy_log', entry, namespace='/framework')
+            F.socketio.emit('gds_tool2_log', entry, namespace='/framework')
         except Exception:
             pass
 
     def _emit_progress(self):
         try:
-            F.socketio.emit('gds_copy_progress', dict(self._progress), namespace='/framework')
+            F.socketio.emit('gds_tool2_progress', dict(self._progress), namespace='/framework')
         except Exception:
             pass
 
@@ -305,7 +305,7 @@ class ModuleMain(PluginModuleBase):
             self._progress['current'] = ''
             self._progress['phase']   = ''
             try:
-                F.socketio.emit('gds_copy_done', dict(self._progress), namespace='/framework')
+                F.socketio.emit('gds_tool2_done', dict(self._progress), namespace='/framework')
             except Exception:
                 pass
 

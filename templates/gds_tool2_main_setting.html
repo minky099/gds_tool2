@@ -300,13 +300,13 @@ body { background: var(--bg0); color: var(--fg); }
 <script>
 var socket = io.connect('/framework');
 
-socket.on('gds_copy_log', function(d) {
+socket.on('gds_tool2_log', function(d) {
   appendLog(d.ts, d.level, d.msg);
 });
-socket.on('gds_copy_progress', function(d) {
+socket.on('gds_tool2_progress', function(d) {
   updateProgress(d);
 });
-socket.on('gds_copy_done', function(d) {
+socket.on('gds_tool2_done', function(d) {
   updateProgress(d);
   setBadge(false);
   setButtons(false);
