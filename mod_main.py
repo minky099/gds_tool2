@@ -1,4 +1,5 @@
 import importlib
+import os
 import threading
 import time
 import traceback
@@ -9,7 +10,11 @@ from cryptography.fernet import Fernet
 try:
     import paramiko
 except ImportError:
-    paramiko = None
+    os.system('pip install paramiko')
+    try:
+        import paramiko
+    except ImportError:
+        paramiko = None
 
 from .setup import *
 
@@ -127,7 +132,7 @@ class ModuleMain(PluginModuleBase):
     # ── SSH ───────────────────────────────────────────────────────
     def _ssh_exec(self, command, timeout=600):
         if paramiko is None:
-            raise RuntimeError('paramiko 미설치. pip install paramiko 필요.')
+            raise RuntimeError('paramiko 자동 설치 실패. 수동으로 pip install paramiko 후 SJVA를 재시작하세요.')
         ip       = P.ModelSetting.get('main_nas_ip')
         port     = int(P.ModelSetting.get('main_nas_port') or 22)
         user     = P.ModelSetting.get('main_nas_user')
