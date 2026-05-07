@@ -22,6 +22,7 @@ from .setup import *
 # ── 상수 ───────────────────────────────────────────────────────
 GIB                  = 1024 * 1024 * 1024
 DEFAULT_BATCH_GB     = 10
+MAX_BATCH_FILES      = 4         # NAS rclone_move.sh가 한 번에 처리하는 파일 수
 COPY_DONE_STATUS     = 'completed'
 COPY_FAIL_PREFIX     = 'fail'
 LOG_KEEP             = 300
@@ -41,7 +42,6 @@ class ModuleMain(PluginModuleBase):
             'main_script_path':      '/volume1/MK/rclone_move.sh',
             'main_gdrive_remote':    'GDG:/Downloads',
             'main_max_batch_gb':     str(DEFAULT_BATCH_GB),    # 배치당 최대 용량 (GB)
-            'main_max_batch_files':  '4',                      # 배치당 최대 파일 수
             'main_poll_interval':    '15',                     # status polling 간격 (초)
             'main_copy_timeout':     '7200',                   # 배치 복사 타임아웃 (초)
             'main_recursive':        'False',                  # 하위 폴더 재귀 처리
@@ -285,10 +285,7 @@ class ModuleMain(PluginModuleBase):
                 max_gb = float(P.ModelSetting.get('main_max_batch_gb') or DEFAULT_BATCH_GB)
             except ValueError:
                 max_gb = DEFAULT_BATCH_GB
-            try:
-                max_count = int(P.ModelSetting.get('main_max_batch_files') or 0)
-            except ValueError:
-                max_count = 0
+            max_count = MAX_BATCH_FILES
             max_bytes = int(max_gb * GIB)
 
             self._history_id = self._history_create(folder_id, max_gb)
@@ -651,10 +648,7 @@ class ModuleMain(PluginModuleBase):
                         max_gb = float(P.ModelSetting.get('main_max_batch_gb') or DEFAULT_BATCH_GB)
                     except ValueError:
                         max_gb = DEFAULT_BATCH_GB
-                    try:
-                        max_count = int(P.ModelSetting.get('main_max_batch_files') or 0)
-                    except ValueError:
-                        max_count = 0
+                    max_count = MAX_BATCH_FILES
                     batches = self._pack_batches(files, int(max_gb * GIB), max_count)
                     ret['files']         = files
                     ret['batches_count'] = len(batches)
