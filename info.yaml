@@ -1,0 +1,7 @@
+title: "GDS 배치 복사"
+version: "1.0.0"
+package_name: "gds_copy_tool"
+developer: "mk"
+description: "공유드라이브 → 내 드라이브 → NAS 배치 자동화"
+home: ""
+more: ""
