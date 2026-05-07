@@ -185,26 +185,34 @@ body { background: var(--bg0); color: var(--fg); }
   <div class="gct-card">
     <h5>📦 배치 정책</h5>
     <div class="row g-3">
-      <div class="col-md-4">
+      <div class="col-md-3">
         <label class="form-label">배치당 최대 용량 (GB) <span style="color:var(--fg3)">— 내 드라이브 여유 용량</span></label>
         <input type="number" step="0.1" class="form-control" id="main_max_batch_gb"
                value="{{P.ModelSetting.get('main_max_batch_gb') or '10'}}">
       </div>
-      <div class="col-md-4">
+      <div class="col-md-3">
         <label class="form-label">완료 polling 간격 (초)</label>
         <input type="number" class="form-control" id="main_poll_interval"
                value="{{P.ModelSetting.get('main_poll_interval') or '15'}}">
       </div>
-      <div class="col-md-4">
+      <div class="col-md-3">
         <label class="form-label">배치 복사 타임아웃 (초)</label>
         <input type="number" class="form-control" id="main_copy_timeout"
                value="{{P.ModelSetting.get('main_copy_timeout') or '7200'}}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">하위 폴더 재귀 처리</label>
+        <select class="form-control" id="main_recursive">
+          <option value="False" {% if (P.ModelSetting.get('main_recursive') or 'False') == 'False' %}selected{% endif %}>OFF — 폴더 직속 파일만</option>
+          <option value="True"  {% if  P.ModelSetting.get('main_recursive') == 'True'  %}selected{% endif %}>ON — 모든 하위 포함</option>
+        </select>
       </div>
     </div>
     <div class="mt-2" style="font-size:11px; color:var(--fg3); line-height:1.5;">
       파일들을 배치당 최대 용량 이하로 묶어 순차 처리합니다.
       각 배치: gds_tool로 내 드라이브에 복사 → 모두 완료될 때까지 대기 → NAS rclone 이동 → 다음 배치.
       단일 파일이 최대 용량을 초과하면 단독 배치로 처리합니다.
+      재귀 ON 시 동일 파일명이 여러 하위 폴더에 있으면 내 드라이브에서 덮어쓸 수 있으니 로그를 확인하세요.
     </div>
   </div>
 
@@ -322,6 +330,7 @@ function saveSetting() {
     main_max_batch_gb:       $('#main_max_batch_gb').val(),
     main_poll_interval:      $('#main_poll_interval').val(),
     main_copy_timeout:       $('#main_copy_timeout').val(),
+    main_recursive:          $('#main_recursive').val(),
   };
   command('save_setting', '', '', '', data, function(ret) {
     alert(ret.msg);

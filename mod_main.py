@@ -38,6 +38,7 @@ class ModuleMain(PluginModuleBase):
             'main_max_batch_gb':     str(DEFAULT_BATCH_GB),    # 배치당 최대 용량 (GB)
             'main_poll_interval':    '15',                     # status polling 간격 (초)
             'main_copy_timeout':     '7200',                   # 배치 복사 타임아웃 (초)
+            'main_recursive':        'False',                  # 하위 폴더 재귀 처리
         }
         self._lock        = threading.Lock()
         self._is_running  = False
@@ -169,9 +170,22 @@ class ModuleMain(PluginModuleBase):
     # ── 공유드라이브 파일 목록 ────────────────────────────────────
     def _get_file_list(self, folder_id):
         try:
-            gds    = self._get_gds()
-            remote = 'worker:{%s}' % folder_id
-            result = gds.SupportRcloneWorker.lsjson(remote)
+            gds       = self._get_gds()
+            remote    = 'worker:{%s}' % folder_id
+            recursive = (P.ModelSetting.get('main_recursive') or 'False') == 'True'
+
+            try:
+                if recursive:
+                    result = gds.SupportRcloneWorker.lsjson(remote, option=['-R', '--files-only'])
+                else:
+                    result = gds.SupportRcloneWorker.lsjson(remote)
+            except TypeError:
+                # 구버전 SupportRcloneWorker.lsjson(remote)만 받는 경우 폴백
+                result = gds.SupportRcloneWorker.lsjson(remote)
+                if recursive:
+                    self._log('SupportRcloneWorker.lsjson이 option 인자 미지원. 비재귀로 진행', 'WARN')
+                    recursive = False
+
             if not result:
                 self._log('lsjson 결과 없음 (폴더 비어있거나 접근 불가)', 'WARN')
                 return []
@@ -180,7 +194,24 @@ class ModuleMain(PluginModuleBase):
                 if not f.get('IsDir', False)
                 and (f.get('MimeType') or '').startswith('video/')
             ]
-            self._log(f'전체 {len(result)}개 항목 중 비디오 {len(files)}개')
+
+            # 동일 Name 충돌 감지 (재귀 시 서로 다른 하위폴더에 같은 파일명)
+            if recursive:
+                names = {}
+                for f in files:
+                    names.setdefault(f.get('Name'), []).append(f.get('Path', f.get('Name')))
+                dups = {n: ps for n, ps in names.items() if len(ps) > 1}
+                if dups:
+                    self._log(
+                        f'⚠ 재귀 모드: 동일 파일명 {len(dups)}건 충돌 — '
+                        f'내 드라이브에서 덮어쓰일 수 있음',
+                        'WARN',
+                    )
+                    for n, ps in list(dups.items())[:5]:
+                        self._log(f'  - {n}: {ps}', 'WARN')
+
+            mode = '재귀' if recursive else '단일 폴더'
+            self._log(f'[{mode}] 전체 {len(result)}개 항목 중 비디오 {len(files)}개')
             return files
         except Exception as e:
             self._log(f'파일 목록 오류: {e}', 'ERROR')
@@ -471,6 +502,7 @@ class ModuleMain(PluginModuleBase):
                     'main_nas_ip', 'main_nas_port', 'main_nas_user',
                     'main_script_path', 'main_gdrive_remote',
                     'main_max_batch_gb', 'main_poll_interval', 'main_copy_timeout',
+                    'main_recursive',
                 ]
                 for key in fields:
                     val = req.form.get(key, '')
