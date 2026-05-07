@@ -360,12 +360,12 @@ class ModuleMain(PluginModuleBase):
             try:
                 ret = gds.add_copy(
                     source_id     = f['ID'],
-                    folder_name   = filename,
+                    folder_name   = '',
                     board_type    = 'direct',
                     category_type = '',
                     size          = fsize,
                     count         = 1,
-                    copy_type     = 'file',
+                    copy_type     = 'folder',
                     remote_path   = gdrive,
                 ) or {}
                 status = ret.get('ret', 'fail')
