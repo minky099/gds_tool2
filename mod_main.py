@@ -151,11 +151,19 @@ class ModuleMain(PluginModuleBase):
         return gds
 
     def _get_request_model(self):
+        # gds_tool setup.py 가 P.ModelRequestItem 으로 노출함.
+        # 미노출 환경(구버전) 대비해 importlib 폴백.
+        try:
+            gds = F.PluginManager.get_plugin_instance('gds_tool')
+            if gds is not None and hasattr(gds, 'ModelRequestItem'):
+                return gds.ModelRequestItem
+        except Exception:
+            pass
         try:
             mod = importlib.import_module('gds_tool.mod_request')
             return mod.ModelRequestItem
         except Exception as e:
-            self._log(f'gds_tool.mod_request 임포트 실패 (lsjson 폴백): {e}', 'WARN')
+            self._log(f'ModelRequestItem 접근 실패 (lsjson 단독): {e}', 'WARN')
             return None
 
     # ── 공유드라이브 파일 목록 ────────────────────────────────────
