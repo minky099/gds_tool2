@@ -53,6 +53,8 @@ class ModuleMain(PluginModuleBase):
         self._stop_flag   = False
         self._logs        = []
         self._progress    = self._fresh_progress()
+        self._ssh_client  = None
+        self._ssh_lock    = threading.Lock()
 
     # ── 초기 진행 상태 ────────────────────────────────────────────
     @staticmethod
@@ -132,8 +134,18 @@ class ModuleMain(PluginModuleBase):
             time.sleep(min(1.0, end - time.time()))
         return True
 
-    # ── SSH ───────────────────────────────────────────────────────
-    def _ssh_exec(self, command, timeout=600):
+    # ── SSH (영속 세션 재사용) ────────────────────────────────────
+    def _ssh_alive(self):
+        c = self._ssh_client
+        if c is None:
+            return False
+        try:
+            t = c.get_transport()
+            return bool(t and t.is_active())
+        except Exception:
+            return False
+
+    def _ssh_connect(self):
         if paramiko is None:
             raise RuntimeError('paramiko 자동 설치 실패. 수동으로 pip install paramiko 후 SJVA를 재시작하세요.')
         ip       = P.ModelSetting.get('main_nas_ip')
@@ -145,18 +157,53 @@ class ModuleMain(PluginModuleBase):
 
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(ip, port=port, username=user, password=password, timeout=10)
         try:
-            client.connect(ip, port=port, username=user, password=password, timeout=10)
-            stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
-            exit_code = stdout.channel.recv_exit_status()
-            out = stdout.read().decode(errors='replace').strip()
-            err = stderr.read().decode(errors='replace').strip()
-            return exit_code, out, err
-        finally:
+            t = client.get_transport()
+            if t is not None:
+                # NAS sshd 가 끊지 않게 keepalive
+                t.set_keepalive(30)
+        except Exception:
+            pass
+        self._ssh_client = client
+
+    def _ssh_close(self):
+        with self._ssh_lock:
+            c = self._ssh_client
+            self._ssh_client = None
+        if c is not None:
             try:
-                client.close()
+                c.close()
             except Exception:
                 pass
+
+    def _ssh_exec(self, command, timeout=600):
+        # 동시 호출 직렬화: 한 transport에서 동시 exec_command 는 복잡해지므로
+        # 일단 lock 으로 직렬화. 어차피 NAS rclone 한 번에 하나만 돌림.
+        with self._ssh_lock:
+            if not self._ssh_alive():
+                self._ssh_connect()
+            try:
+                return self._ssh_run(command, timeout)
+            except (paramiko.SSHException, OSError, EOFError) as e:
+                # 한 번 재연결 후 재시도
+                P.logger.warning(f'SSH 끊김 감지({e}). 재연결 시도.')
+                try:
+                    if self._ssh_client is not None:
+                        self._ssh_client.close()
+                except Exception:
+                    pass
+                self._ssh_client = None
+                self._ssh_connect()
+                return self._ssh_run(command, timeout)
+
+    def _ssh_run(self, command, timeout):
+        client = self._ssh_client
+        stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
+        exit_code = stdout.channel.recv_exit_status()
+        out = stdout.read().decode(errors='replace').strip()
+        err = stderr.read().decode(errors='replace').strip()
+        return exit_code, out, err
 
     def _test_ssh(self):
         try:
@@ -386,10 +433,14 @@ class ModuleMain(PluginModuleBase):
                 self._is_running = False
             self._progress['current'] = ''
             self._progress['phase']   = ''
+            self._ssh_close()
             try:
                 F.socketio.emit('gds_tool2_done', dict(self._progress), namespace='/framework')
             except Exception:
                 pass
+
+    def plugin_unload(self):
+        self._ssh_close()
 
     # ── 이력 ──────────────────────────────────────────────────────
     def _history_model(self):
@@ -662,7 +713,10 @@ class ModuleMain(PluginModuleBase):
         ret = {'ret': 'success'}
         try:
             if command == 'test_ssh':
-                if self._test_ssh():
+                ok = self._test_ssh()
+                if not self._is_running:
+                    self._ssh_close()    # 단발 테스트는 세션 남기지 않음
+                if ok:
                     ret['msg'] = 'SSH 연결 성공!'
                 else:
                     ret['ret'] = 'error'
