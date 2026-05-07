@@ -82,7 +82,7 @@ $("body").on('click', '#start_btn', function(e) {
   e.preventDefault();
   var fid = $('#batch_folder_id').val().trim();
   if (!fid) { alert('폴더 ID를 입력하세요.'); return; }
-  globalSendCommand('start_btn', fid, '', '', function(ret) {
+  globalSendCommand('start_batch', fid, '', '', function(ret) {
     if (ret.ret === 'success') {
       $('#batch-status').show();
       setBadge(true);
