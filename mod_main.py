@@ -377,22 +377,24 @@ class ModuleMain(PluginModuleBase):
                 final_note   = '파일 없음'
                 return
 
-            files = self._filter_skip_completed(files)
-            if not files:
-                self._log('모든 파일이 이미 완료 기록 있음. 처리할 항목 없음.')
-                final_status = 'completed'
-                final_note   = '전부 스킵'
-                return
-
             if selected_ids:
+                # 사용자가 미리보기에서 명시 선택 → completed 도 그대로 처리 (재요청)
                 wanted = {s.strip() for s in selected_ids.split(',') if s.strip()}
                 before = len(files)
                 files  = [f for f in files if f.get('ID') in wanted]
-                self._log(f'사용자 선택: {len(files)}개 (전체 가능 {before}개 중)')
+                self._log(f'사용자 선택: {len(files)}개 (전체 {before}개 중)')
                 if not files:
                     self._log('선택한 파일이 모두 필터링됨. 처리할 항목 없음.', 'WARN')
                     final_status = 'completed'
                     final_note   = '선택 0개'
+                    return
+            else:
+                # 미리보기 없이 직접 시작 → completed 자동 스킵
+                files = self._filter_skip_completed(files)
+                if not files:
+                    self._log('모든 파일이 이미 완료 기록 있음. 처리할 항목 없음.')
+                    final_status = 'completed'
+                    final_note   = '전부 스킵'
                     return
 
             self._progress['total']      = len(files)
@@ -455,6 +457,27 @@ class ModuleMain(PluginModuleBase):
         Model    = self._get_request_model()
         interval = max(int(P.ModelSetting.get('main_poll_interval') or 15), 3)
         timeout  = int(P.ModelSetting.get('main_copy_timeout') or 7200)
+
+        # gds_tool 의 request 모듈 (재요청용 add_copy_force 호출 위해)
+        gds_req_mod = None
+        try:
+            if hasattr(gds, 'logic'):
+                gds_req_mod = gds.logic.get_module('request')
+        except Exception:
+            gds_req_mod = None
+
+        # source_id → 기존 gds_tool item_id (status==completed 인 경우만)
+        force_map = {}
+        if Model is not None:
+            for f in files:
+                try:
+                    existing = Model.get_by_source_id(f.get('ID'))
+                    if existing and (existing.status or '') == COPY_DONE_STATUS:
+                        force_map[f.get('ID')] = existing.id
+                except Exception:
+                    pass
+        if force_map:
+            self._log(f'재요청 대상 (이전 completed): {len(force_map)}개')
 
         def add_inflight(name, size):
             with self._lock:
@@ -543,19 +566,24 @@ class ModuleMain(PluginModuleBase):
                     name = f.get('Name', '?')
                     add_inflight(name, size)
 
+                    force_id = force_map.get(f.get('ID'))
                     try:
-                        ret = gds.add_copy(
-                            source_id     = f['ID'],
-                            folder_name   = '',
-                            board_type    = 'direct',
-                            category_type = '',
-                            size          = size,
-                            count         = 1,
-                            copy_type     = 'folder',
-                            remote_path   = gdrive,
-                        ) or {}
+                        if force_id is not None and gds_req_mod is not None:
+                            ret = gds_req_mod.add_copy_force(force_id) or {}
+                            self._log(f'  → 재요청: {name} (gds_tool id={force_id})')
+                        else:
+                            ret = gds.add_copy(
+                                source_id     = f['ID'],
+                                folder_name   = '',
+                                board_type    = 'direct',
+                                category_type = '',
+                                size          = size,
+                                count         = 1,
+                                copy_type     = 'folder',
+                                remote_path   = gdrive,
+                            ) or {}
                     except Exception as e:
-                        self._log(f'  ✗ add_copy 예외: {name}: {e}', 'ERROR')
+                        self._log(f'  ✗ 복사 요청 예외: {name}: {e}', 'ERROR')
                         self._progress['failed'] += 1
                         release_capacity(size)
                         remove_inflight(name)
@@ -870,21 +898,32 @@ class ModuleMain(PluginModuleBase):
                     if arg2 in ('0', '1'):
                         P.ModelSetting.set('main_recursive', 'True' if arg2 == '1' else 'False')
                     files = self._get_file_list(fid)
-                    files = self._filter_skip_completed(files)
+                    # 미리보기에서는 completed 도 필터링하지 않고 표시 (재요청 가능하게)
+                    Model = self._get_request_model()
+                    completed_count = 0
+                    if Model is not None:
+                        for f in files:
+                            try:
+                                existing = Model.get_by_source_id(f.get('ID'))
+                                if existing and (existing.status or '') == COPY_DONE_STATUS:
+                                    f['_gds_status'] = 'completed'
+                                    f['_gds_id']     = existing.id
+                                    completed_count += 1
+                                else:
+                                    f['_gds_status'] = ''
+                            except Exception:
+                                f['_gds_status'] = ''
                     try:
                         max_gb = float(P.ModelSetting.get('main_max_batch_gb') or DEFAULT_BATCH_GB)
                     except ValueError:
                         max_gb = DEFAULT_BATCH_GB
-                    max_count = MAX_BATCH_FILES
-                    batches = self._pack_batches(files, int(max_gb * GIB), max_count)
-                    ret['files']         = files
-                    ret['batches_count'] = len(batches)
-                    ret['total_size']    = sum((f.get('Size', 0) or 0) for f in files)
-                    cap_desc = f'≤{max_gb:g} GB' + (f', ≤{max_count}개' if max_count > 0 else '')
+                    ret['files']      = files
+                    ret['total_size'] = sum((f.get('Size', 0) or 0) for f in files)
+                    extra = f' (이전 완료 {completed_count}개 포함)' if completed_count else ''
                     ret['msg'] = (
                         f'{len(files)}개 파일 / '
                         f'{ret["total_size"]/GIB:.2f} GB / '
-                        f'{len(batches)}개 배치 (배치당 {cap_desc})'
+                        f'capacity ≤ {max_gb:g} GB{extra}'
                     )
 
             elif command == 'start_batch':

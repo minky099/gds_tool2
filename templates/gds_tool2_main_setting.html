@@ -156,15 +156,24 @@ function renderPreview(files, summary) {
     return;
   }
   files.forEach(function(f, i) {
-    var sizeGb = ((f.Size || 0) / (1024*1024*1024)).toFixed(2);
-    var $row = $('<div class="form-check"></div>');
-    var $cb  = $('<input type="checkbox" class="form-check-input file-cb" checked>')
+    var sizeGb     = ((f.Size || 0) / (1024*1024*1024)).toFixed(2);
+    var isDone     = (f._gds_status === 'completed');
+    var $row       = $('<div class="form-check"></div>');
+    if (isDone) $row.css('opacity', '0.65');
+
+    var $cb = $('<input type="checkbox" class="form-check-input file-cb">')
                 .attr('id', 'cb_' + i)
-                .attr('data-id', f.ID);
+                .attr('data-id', f.ID)
+                .prop('checked', !isDone);   // completed 는 기본 체크 해제
+
     var $lbl = $('<label class="form-check-label"></label>')
                 .attr('for', 'cb_' + i);
     $lbl.append(document.createTextNode(f.Name || ''));
     $lbl.append(' <span class="text-muted">(' + sizeGb + ' GB)</span>');
+    if (isDone) {
+      $lbl.append(' <span class="badge badge-secondary ml-1">이전 완료</span>');
+    }
+
     $row.append($cb).append($lbl);
     $list.append($row);
   });
