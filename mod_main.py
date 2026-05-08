@@ -1,6 +1,7 @@
 import importlib
 import os
 import queue
+import re
 import shlex
 import threading
 import time
@@ -31,6 +32,17 @@ COPY_DONE_STATUS     = 'completed'
 COPY_FAIL_PREFIX     = 'fail'
 LOG_KEEP             = 300
 LOG_RETURN_TAIL      = 100
+
+# rclone --stats 1s 출력 파싱.
+# "Transferred:  1.234 GiB / 5.000 GiB, 24%, 56.7 MiB/s, ETA 1m20s" 형태.
+RCLONE_STATS_RE = re.compile(
+    r'Transferred:\s+'
+    r'([\d.]+\s*[KMGT]?i?B)\s*/\s*'
+    r'([\d.]+\s*[KMGT]?i?B),\s*'
+    r'(\d+)%'
+    r'(?:,\s*([\d.]+\s*[KMGT]?i?B/s))?'
+    r'(?:,\s*ETA\s+(\S+))?'
+)
 
 
 class ModuleMain(PluginModuleBase):
@@ -435,14 +447,30 @@ class ModuleMain(PluginModuleBase):
 
         def add_inflight(name, size):
             with self._lock:
-                self._progress['in_flight'].append(name)
+                self._progress['in_flight'].append({
+                    'name':     name,
+                    'size_gb':  size / GIB,
+                    'phase':    'copy',     # copy → arrived → move
+                    'percent':  0,
+                    'speed':    '',
+                    'eta':      '',
+                })
                 self._progress['in_flight_bytes'] = in_flight_b[0]
+            self._emit_progress()
+
+        def update_inflight(name, **fields):
+            with self._lock:
+                for entry in self._progress['in_flight']:
+                    if entry['name'] == name:
+                        entry.update(fields)
+                        break
             self._emit_progress()
 
         def remove_inflight(name):
             with self._lock:
-                try: self._progress['in_flight'].remove(name)
-                except ValueError: pass
+                self._progress['in_flight'] = [
+                    e for e in self._progress['in_flight'] if e['name'] != name
+                ]
                 self._progress['in_flight_bytes'] = in_flight_b[0]
             self._emit_progress()
 
@@ -592,8 +620,8 @@ class ModuleMain(PluginModuleBase):
                         with pending_lock:
                             pending.pop(name, None)
                         self._progress['arrived'] += 1
+                        update_inflight(name, phase='arrived', percent=100)
                         self._log(f'  ✓ 도착: {name}')
-                        self._emit_progress()
                         ready_seq[0] += 1
                         ready_q.put((size, ready_seq[0], (f, size)))
 
@@ -637,8 +665,14 @@ class ModuleMain(PluginModuleBase):
                     continue
                 f, size = item
                 name = f.get('Name', '?')
+                update_inflight(name, phase='move', percent=0, speed='', eta='')
                 try:
-                    ok = self._run_nas_move_one(name, n_streams)
+                    ok = self._run_nas_move_one(
+                        name, n_streams,
+                        progress_cb=lambda pct, sp, eta_, _n=name: update_inflight(
+                            _n, percent=pct, speed=sp, eta=eta_
+                        ),
+                    )
                     if ok:
                         self._progress['moved'] += 1
                     else:
@@ -670,19 +704,80 @@ class ModuleMain(PluginModuleBase):
         self._pipeline_cv = None
 
     # ── NAS 단일 파일 이동 ────────────────────────────────────────
-    def _run_nas_move_one(self, name, streams):
+    def _run_nas_move_one(self, name, streams, progress_cb=None):
         script = P.ModelSetting.get('main_script_path')
-        cmd = f'bash {shlex.quote(script)} {shlex.quote(name)} {int(streams)}'
+        # rclone --stats 1s 출력은 stderr 로 가므로 2>&1 로 stdout 에 합침.
+        cmd = f'bash {shlex.quote(script)} {shlex.quote(name)} {int(streams)} 2>&1'
         self._log(f'  → NAS 이동 시작: {name} (streams={streams})')
         try:
-            code, out, err = self._ssh_exec(cmd, timeout=14400)
+            self._ensure_ssh()
         except Exception as e:
-            self._log(f'  ✗ SSH 예외: {name}: {e}', 'ERROR')
+            self._log(f'  ✗ SSH 연결 실패: {name}: {e}', 'ERROR')
             return False
-        if code == 0:
+        try:
+            return self._stream_move(name, cmd, progress_cb)
+        except (paramiko.SSHException, OSError, EOFError) as e:
+            P.logger.warning(f'SSH 끊김({e}). 재연결 후 재시도.')
+            try:
+                with self._ssh_lock:
+                    if not self._ssh_alive():
+                        try:
+                            if self._ssh_client is not None:
+                                self._ssh_client.close()
+                        except Exception:
+                            pass
+                        self._ssh_client = None
+                        self._ssh_connect()
+                return self._stream_move(name, cmd, progress_cb)
+            except Exception as e2:
+                self._log(f'  ✗ SSH 재시도 실패: {name}: {e2}', 'ERROR')
+                return False
+        except Exception as e:
+            self._log(f'  ✗ 이동 예외: {name}: {e}', 'ERROR')
+            return False
+
+    def _stream_move(self, name, cmd, progress_cb):
+        client = self._ssh_client
+        stdin, stdout, stderr = client.exec_command(cmd, timeout=14400)
+
+        last_pct = -1
+        last_pct_log = -10              # 진행 로그 throttle (10% 단위)
+        tail_buf = []                   # 실패 시 마지막 출력 보존
+
+        try:
+            for raw in iter(stdout.readline, ''):
+                if not raw:
+                    break
+                line = raw.rstrip()
+                if not line:
+                    continue
+                tail_buf.append(line)
+                if len(tail_buf) > 30:
+                    tail_buf = tail_buf[-30:]
+
+                m = RCLONE_STATS_RE.search(line)
+                if m:
+                    pct   = int(m.group(3))
+                    speed = (m.group(4) or '').replace(' ', '')
+                    eta   = m.group(5) or ''
+                    if progress_cb is not None:
+                        try:
+                            progress_cb(pct, speed, eta)
+                        except Exception:
+                            pass
+                    if pct >= last_pct_log + 10:
+                        self._log(f'  · {name}: {pct}% ({speed}, ETA {eta})')
+                        last_pct_log = pct - (pct % 10)
+                    last_pct = pct
+        except Exception:
+            raise
+
+        exit_code = stdout.channel.recv_exit_status()
+        if exit_code == 0:
             self._log(f'  ✓ NAS 이동 완료: {name}')
             return True
-        self._log(f'  ✗ NAS 이동 실패 ({code}): {name}: {(err or out)[:200]}', 'ERROR')
+        tail = '\n'.join(tail_buf[-5:])
+        self._log(f'  ✗ NAS 이동 실패 ({exit_code}): {name}: {tail[:300]}', 'ERROR')
         return False
 
     def plugin_unload(self):
