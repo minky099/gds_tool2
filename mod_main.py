@@ -420,7 +420,8 @@ class ModuleMain(PluginModuleBase):
         in_flight_b    = [0]                          # 현재 in-flight 합계
         pending_lock   = threading.Lock()
         pending        = {}                           # name -> (file, size, req_id, started_at)
-        ready_q        = queue.Queue()
+        ready_q        = queue.PriorityQueue()        # (size, seq, (f, size)) — 작은 거 우선
+        ready_seq      = [0]                          # tie-breaker (PriorityQueue는 size 동률 시 다음 키 비교)
         done_issue     = threading.Event()
         done_watch     = threading.Event()
 
@@ -589,7 +590,8 @@ class ModuleMain(PluginModuleBase):
                         self._progress['arrived'] += 1
                         self._log(f'  ✓ 도착: {name}')
                         self._emit_progress()
-                        ready_q.put((f, size))
+                        ready_seq[0] += 1
+                        ready_q.put((size, ready_seq[0], (f, size)))
 
                     for name, size, st in fails:
                         with pending_lock:
@@ -626,7 +628,7 @@ class ModuleMain(PluginModuleBase):
                 if done_issue.is_set() and done_watch.is_set() and ready_q.empty():
                     return
                 try:
-                    item = ready_q.get(timeout=1)
+                    _, _, item = ready_q.get(timeout=1)
                 except queue.Empty:
                     continue
                 f, size = item
