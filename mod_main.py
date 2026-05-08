@@ -336,7 +336,7 @@ class ModuleMain(PluginModuleBase):
         return kept
 
     # ── 배치 워커 (스레드) ────────────────────────────────────────
-    def _batch_worker(self, folder_id):
+    def _batch_worker(self, folder_id, selected_ids=None):
         final_status = 'completed'
         final_note   = ''
         try:
@@ -383,6 +383,17 @@ class ModuleMain(PluginModuleBase):
                 final_status = 'completed'
                 final_note   = '전부 스킵'
                 return
+
+            if selected_ids:
+                wanted = {s.strip() for s in selected_ids.split(',') if s.strip()}
+                before = len(files)
+                files  = [f for f in files if f.get('ID') in wanted]
+                self._log(f'사용자 선택: {len(files)}개 (전체 가능 {before}개 중)')
+                if not files:
+                    self._log('선택한 파일이 모두 필터링됨. 처리할 항목 없음.', 'WARN')
+                    final_status = 'completed'
+                    final_note   = '선택 0개'
+                    return
 
             self._progress['total']      = len(files)
             self._progress['concurrent'] = n_consumers
@@ -878,6 +889,7 @@ class ModuleMain(PluginModuleBase):
 
             elif command == 'start_batch':
                 fid = (arg1 or '').strip()
+                selected_ids = (arg3 or '').strip()
                 if not fid:
                     ret['ret'] = 'error'
                     ret['msg'] = '폴더 ID를 입력하세요.'
@@ -896,7 +908,11 @@ class ModuleMain(PluginModuleBase):
                                 P.ModelSetting.set('main_recursive', 'True' if arg2 == '1' else 'False')
                         except Exception:
                             pass
-                        t = threading.Thread(target=self._batch_worker, args=(fid,), daemon=True)
+                        t = threading.Thread(
+                            target=self._batch_worker,
+                            args=(fid, selected_ids or None),
+                            daemon=True,
+                        )
                         t.start()
                         ret['msg'] = '배치 시작!'
 

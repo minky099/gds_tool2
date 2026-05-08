@@ -32,6 +32,16 @@
     [['preview_btn', '미리보기'], ['start_btn', '배치 시작'], ['stop_btn', '배치 중단']],
     placeholder='공유드라이브 폴더 ID', value=arg['main_last_source_id']) }}
 
+<div id="preview-area" class="mt-2" style="display:none;">
+  <div class="mb-2 d-flex align-items-center" style="font-size:12px;">
+    <span id="preview-summary" class="me-3 text-muted"></span>
+    <button id="select_all_btn" class="btn btn-sm btn-outline-primary me-1">전체 선택</button>
+    <button id="select_none_btn" class="btn btn-sm btn-outline-primary me-2">전체 해제</button>
+    <span id="select_count" class="text-muted"></span>
+  </div>
+  <div id="preview-list" style="max-height:300px; overflow-y:auto; border:1px solid #ced4da; border-radius:4px; padding:8px; font-size:12px;"></div>
+</div>
+
 <div id="batch-status" class="mt-3" style="display:none;">
   <div class="card">
     <div class="card-body py-2">
@@ -80,7 +90,10 @@ $("body").on('click', '#preview_btn', function(e) {
   var fid = $('#main_last_source_id').val().trim();
   if (!fid) { alert('폴더 ID를 입력하세요.'); return; }
   var rec = $('#main_recursive').prop('checked') ? '1' : '0';
-  globalSendCommand('preview_files', fid, rec, '');
+  globalSendCommand('preview_files', fid, rec, '', function(ret) {
+    if (!ret || ret.ret !== 'success') return;
+    renderPreview(ret.files || [], ret.msg || '');
+  });
 });
 
 $("body").on('click', '#start_btn', function(e) {
@@ -88,13 +101,72 @@ $("body").on('click', '#start_btn', function(e) {
   var fid = $('#main_last_source_id').val().trim();
   if (!fid) { alert('폴더 ID를 입력하세요.'); return; }
   var rec = $('#main_recursive').prop('checked') ? '1' : '0';
-  globalSendCommand('start_batch', fid, rec, '', function(ret) {
+
+  var selectedIds = '';
+  var $cbs = $('.file-cb');
+  if ($cbs.length > 0) {
+    var ids = [];
+    $('.file-cb:checked').each(function(){ ids.push($(this).data('id')); });
+    if (ids.length === 0) {
+      alert('선택된 파일이 없습니다.');
+      return;
+    }
+    selectedIds = ids.join(',');
+  }
+  // 미리보기 안 했으면 selectedIds='' → 백엔드가 폴더 내 전체 처리 (기존 동작)
+
+  globalSendCommand('start_batch', fid, rec, selectedIds, function(ret) {
     if (ret.ret === 'success') {
       $('#batch-status').show();
       setBadge(true);
     }
   });
 });
+
+$("body").on('click', '#select_all_btn', function(e) {
+  e.preventDefault();
+  $('.file-cb').prop('checked', true);
+  updateSelectCount();
+});
+
+$("body").on('click', '#select_none_btn', function(e) {
+  e.preventDefault();
+  $('.file-cb').prop('checked', false);
+  updateSelectCount();
+});
+
+$("body").on('change', '.file-cb', updateSelectCount);
+
+function renderPreview(files, summary) {
+  $('#preview-area').show();
+  $('#preview-summary').text(summary);
+  var $list = $('#preview-list').empty();
+  if (files.length === 0) {
+    $list.append('<div class="text-muted">처리할 파일이 없습니다.</div>');
+    updateSelectCount();
+    return;
+  }
+  files.forEach(function(f, i) {
+    var sizeGb = ((f.Size || 0) / (1024*1024*1024)).toFixed(2);
+    var $row = $('<div class="form-check"></div>');
+    var $cb  = $('<input type="checkbox" class="form-check-input file-cb" checked>')
+                .attr('id', 'cb_' + i)
+                .attr('data-id', f.ID);
+    var $lbl = $('<label class="form-check-label"></label>')
+                .attr('for', 'cb_' + i);
+    $lbl.append(document.createTextNode(f.Name || ''));
+    $lbl.append(' <span class="text-muted">(' + sizeGb + ' GB)</span>');
+    $row.append($cb).append($lbl);
+    $list.append($row);
+  });
+  updateSelectCount();
+}
+
+function updateSelectCount() {
+  var checked = $('.file-cb:checked').length;
+  var total   = $('.file-cb').length;
+  $('#select_count').text(checked + ' / ' + total + ' 선택');
+}
 
 $("body").on('click', '#stop_btn', function(e) {
   e.preventDefault();
