@@ -5,6 +5,7 @@ import shlex
 import threading
 import time
 import traceback
+from bisect import bisect_right
 from datetime import datetime
 
 from cryptography.fernet import Fernet
@@ -447,55 +448,52 @@ class ModuleMain(PluginModuleBase):
                 in_flight_b[0] -= size
                 cv.notify_all()
 
-        # ──── Producer (first-fit: 들어갈 수 있는 파일을 앞에서부터 스캔) ────
+        # ──── Producer (best-fit: 사이즈 기준 정렬 + bisect로 O(log n) 선택) ────
+        # files 의 size 정보는 _get_file_list 시점에 lsjson 으로 이미 받아둠.
+        # 그걸 size 오름차순으로 정렬해두면, 매 라운드마다 가용 용량 이하의
+        # 가장 큰 파일을 bisect 로 한 번에 찾을 수 있다 (스캔 X).
         def producer():
-            remaining     = list(files)
+            items = sorted(
+                [((f.get('Size', 0) or 0), f) for f in files],
+                key=lambda x: x[0],
+            )
+            sizes = [it[0] for it in items]
             last_wait_log = 0.0
+
             try:
-                while remaining:
+                while items:
                     if self._stop_flag:
                         break
 
                     with cv:
-                        chosen_idx = None
-                        for i, f in enumerate(remaining):
-                            sz = f.get('Size', 0) or 0
-                            if in_flight_b[0] + sz <= max_bytes:
-                                chosen_idx = i
-                                break
+                        available = max_bytes - in_flight_b[0]
+                        idx = bisect_right(sizes, available) - 1
 
-                        # 들어갈 게 하나도 없는 경우
-                        if chosen_idx is None:
-                            # in-flight 0인데 아무것도 안 들어가면 → 단일 파일이 한도 초과
+                        if idx < 0:
+                            # 가용 용량 < 모든 잔여 파일
                             if in_flight_b[0] == 0:
-                                # 가장 작은 것 단독 처리 (어쩔 수 없음)
-                                smallest_i = min(
-                                    range(len(remaining)),
-                                    key=lambda j: remaining[j].get('Size', 0) or 0,
-                                )
-                                sz = remaining[smallest_i].get('Size', 0) or 0
+                                # 단일 파일이 한도 초과 → 어쩔 수 없이 단독 처리
+                                idx = 0     # 가장 작은 것
                                 self._log(
-                                    f'  ⚠ 한도 초과 단독 처리: {remaining[smallest_i].get("Name")} '
-                                    f'({sz/GIB:.2f} GB > 한도 {max_bytes/GIB:.2f} GB)',
+                                    f'  ⚠ 한도 초과 단독 처리: {items[0][1].get("Name")} '
+                                    f'({items[0][0]/GIB:.2f} GB > 한도 {max_bytes/GIB:.2f} GB)',
                                     'WARN',
                                 )
-                                chosen_idx = smallest_i
                             else:
                                 now = time.time()
                                 if now - last_wait_log > 10:
-                                    sizes = [(r.get('Size', 0) or 0)/GIB for r in remaining]
                                     self._log(
-                                        f'  · capa 대기: 남은 {len(remaining)}개 모두 '
-                                        f'들어갈 자리 없음 (in-flight {in_flight_b[0]/GIB:.2f} GB, '
-                                        f'최소 {min(sizes):.2f} GB)'
+                                        f'  · capa 대기: 남은 {len(items)}개 모두 한도 초과 '
+                                        f'(in-flight {in_flight_b[0]/GIB:.2f} GB, '
+                                        f'최소 {sizes[0]/GIB:.2f} GB 필요)'
                                     )
                                     last_wait_log = now
                                 cv.wait(timeout=5)
                                 continue
 
                         last_wait_log = 0
-                        f    = remaining.pop(chosen_idx)
-                        size = f.get('Size', 0) or 0
+                        size, f = items.pop(idx)
+                        sizes.pop(idx)
                         in_flight_b[0] += size
 
                     name = f.get('Name', '?')
