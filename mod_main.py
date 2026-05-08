@@ -61,6 +61,7 @@ class ModuleMain(PluginModuleBase):
         self._progress    = self._fresh_progress()
         self._ssh_client  = None
         self._ssh_lock    = threading.Lock()
+        self._pipeline_cv = None
 
     # ── 초기 진행 상태 ────────────────────────────────────────────
     @staticmethod
@@ -424,6 +425,7 @@ class ModuleMain(PluginModuleBase):
         ready_seq      = [0]                          # tie-breaker (PriorityQueue는 size 동률 시 다음 키 비교)
         done_issue     = threading.Event()
         done_watch     = threading.Event()
+        self._pipeline_cv = cv                        # stop 시 외부에서 깨우려고 노출
 
         gds      = self._get_gds()
         gdrive   = P.ModelSetting.get('main_gdrive_remote')
@@ -489,7 +491,9 @@ class ModuleMain(PluginModuleBase):
                                         f'최소 {sizes[0]/GIB:.2f} GB 필요)'
                                     )
                                     last_wait_log = now
-                                cv.wait(timeout=5)
+                                # capacity 변화는 consumer 의 release_capacity → cv.notify_all 또는
+                                # stop 명령 시 외부에서 깨우는 경로뿐이므로 polling 안 함.
+                                cv.wait()
                                 continue
 
                         last_wait_log = 0
@@ -663,6 +667,7 @@ class ModuleMain(PluginModuleBase):
             cv.notify_all()           # 깨워서 종료 검사하게
         for t in cons_ts:
             t.join()
+        self._pipeline_cv = None
 
     # ── NAS 단일 파일 이동 ────────────────────────────────────────
     def _run_nas_move_one(self, name, streams):
@@ -803,6 +808,10 @@ class ModuleMain(PluginModuleBase):
             elif command == 'stop_batch':
                 if self._is_running:
                     self._stop_flag = True
+                    cv = self._pipeline_cv
+                    if cv is not None:
+                        with cv:
+                            cv.notify_all()           # capacity 대기 중인 producer 깨우기
                     ret['msg'] = '중단 요청. 다음 안전 지점에서 정지합니다.'
                 else:
                     ret['msg'] = '실행 중인 배치 없음.'
