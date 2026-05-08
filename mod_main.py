@@ -968,6 +968,48 @@ class ModuleMain(PluginModuleBase):
                     n = Model.delete_all(0)
                     ret['msg'] = f'{n}건 삭제'
 
+            elif command == 'list_bookmarks':
+                Model = getattr(P, 'ModelSourceBookmark', None)
+                if Model is None:
+                    ret['list'] = []
+                else:
+                    try:
+                        items = Model.get_list() or []
+                        items.sort(key=lambda x: x.id, reverse=True)
+                        ret['list'] = [it.as_dict() for it in items]
+                    except Exception as e:
+                        ret['list'] = []
+                        ret['ret'] = 'error'
+                        ret['msg'] = f'즐겨찾기 조회 실패: {e}'
+
+            elif command == 'add_bookmark':
+                name = (arg1 or '').strip()
+                sid  = (arg2 or '').strip()
+                Model = getattr(P, 'ModelSourceBookmark', None)
+                if not name or not sid:
+                    ret['ret'] = 'error'
+                    ret['msg'] = '이름과 ID가 모두 필요합니다.'
+                elif Model is None:
+                    ret['ret'] = 'error'
+                    ret['msg'] = '모델 없음'
+                else:
+                    item = Model(name=name, source_id=sid)
+                    item.save()
+                    ret['msg'] = f'저장: {name}'
+
+            elif command == 'delete_bookmark':
+                bid = (arg1 or '').strip()
+                Model = getattr(P, 'ModelSourceBookmark', None)
+                if Model is None or not bid:
+                    ret['ret'] = 'error'
+                    ret['msg'] = '삭제 대상 없음'
+                else:
+                    if Model.delete_by_id(bid):
+                        ret['msg'] = '삭제 완료'
+                    else:
+                        ret['ret'] = 'error'
+                        ret['msg'] = '삭제 실패'
+
         except Exception as e:
             ret['ret'] = 'error'
             ret['msg'] = str(e)

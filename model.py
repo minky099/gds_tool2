@@ -31,3 +31,20 @@ class ModelBatchHistory(ModelBase):
         self.fail_count     = 0
         self.status         = 'running'
         self.note           = ''
+
+
+class ModelSourceBookmark(ModelBase):
+    P = P
+    __tablename__ = f'{P.package_name}_source_bookmark'
+    __table_args__ = {'mysql_collate': 'utf8_general_ci'}
+    __bind_key__ = P.package_name
+
+    id           = db.Column(db.Integer, primary_key=True)
+    created_time = db.Column(db.DateTime)
+    name         = db.Column(db.String)
+    source_id    = db.Column(db.String)
+
+    def __init__(self, name='', source_id=''):
+        self.created_time = datetime.now()
+        self.name         = name
+        self.source_id    = source_id

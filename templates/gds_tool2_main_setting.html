@@ -32,6 +32,15 @@
     [['preview_btn', '미리보기'], ['start_btn', '배치 시작'], ['stop_btn', '배치 중단']],
     placeholder='공유드라이브 폴더 ID', value=arg['main_last_source_id']) }}
 
+<div class="mt-2 d-flex align-items-center" style="font-size:12.5px;">
+  <strong class="me-2">즐겨찾기:</strong>
+  <select id="bookmark_select" class="form-select form-select-sm me-2" style="max-width:340px;">
+    <option value="">-- 선택 --</option>
+  </select>
+  <button id="bookmark_add_btn" class="btn btn-sm btn-outline-primary me-1">현재 ID 저장</button>
+  <button id="bookmark_del_btn" class="btn btn-sm btn-outline-danger">선택 삭제</button>
+</div>
+
 <div id="preview-area" class="mt-2" style="display:none;">
   <div class="mb-2 d-flex align-items-center" style="font-size:12px;">
     <span id="preview-summary" class="me-3 text-muted"></span>
@@ -284,6 +293,54 @@ function refreshStatus() {
   });
 }
 
-$(document).ready(function() { refreshStatus(); });
+function loadBookmarks() {
+  globalSendCommand('list_bookmarks', '', '', '', function(ret) {
+    var items = (ret && ret.list) ? ret.list : [];
+    var $sel = $('#bookmark_select').empty();
+    $sel.append('<option value="">-- 선택 --</option>');
+    items.forEach(function(b) {
+      var sidShort = (b.source_id || '').slice(0, 10) + '…';
+      var $opt = $('<option></option>')
+                  .attr('value', b.source_id)
+                  .attr('data-id', b.id)
+                  .text(b.name + '  [' + sidShort + ']');
+      $sel.append($opt);
+    });
+  });
+}
+
+$("body").on('change', '#bookmark_select', function() {
+  var v = $(this).val();
+  if (v) $('#main_last_source_id').val(v);
+});
+
+$("body").on('click', '#bookmark_add_btn', function(e) {
+  e.preventDefault();
+  var sid = $('#main_last_source_id').val().trim();
+  if (!sid) { alert('먼저 폴더 ID를 입력하세요.'); return; }
+  var name = prompt('즐겨찾기 이름을 입력하세요:');
+  if (name === null) return;
+  name = (name || '').trim();
+  if (!name) { alert('이름을 입력하세요.'); return; }
+  globalSendCommand('add_bookmark', name, sid, '', function(ret) {
+    if (ret && ret.ret === 'success') loadBookmarks();
+  });
+});
+
+$("body").on('click', '#bookmark_del_btn', function(e) {
+  e.preventDefault();
+  var $opt = $('#bookmark_select option:selected');
+  var bid = $opt.attr('data-id');
+  if (!bid) { alert('삭제할 즐겨찾기를 선택하세요.'); return; }
+  if (!confirm('삭제할까요?\n' + $opt.text())) return;
+  globalSendCommand('delete_bookmark', bid, '', '', function(ret) {
+    if (ret && ret.ret === 'success') loadBookmarks();
+  });
+});
+
+$(document).ready(function() {
+  refreshStatus();
+  loadBookmarks();
+});
 </script>
 {% endblock %}
