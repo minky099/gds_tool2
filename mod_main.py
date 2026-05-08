@@ -447,26 +447,58 @@ class ModuleMain(PluginModuleBase):
                 in_flight_b[0] -= size
                 cv.notify_all()
 
-        # ──── Producer ────
+        # ──── Producer (first-fit: 들어갈 수 있는 파일을 앞에서부터 스캔) ────
         def producer():
+            remaining     = list(files)
+            last_wait_log = 0.0
             try:
-                for f in files:
+                while remaining:
                     if self._stop_flag:
                         break
-                    name = f.get('Name', '?')
-                    size = f.get('Size', 0) or 0
 
                     with cv:
-                        if in_flight_b[0] + size > max_bytes:
-                            self._log(
-                                f'  · capa 대기: {name} ({size/GIB:.2f} GB, '
-                                f'현재 in-flight {in_flight_b[0]/GIB:.2f} GB)'
-                            )
-                        while in_flight_b[0] + size > max_bytes and not self._stop_flag:
-                            cv.wait(timeout=2)
-                        if self._stop_flag:
-                            break
+                        chosen_idx = None
+                        for i, f in enumerate(remaining):
+                            sz = f.get('Size', 0) or 0
+                            if in_flight_b[0] + sz <= max_bytes:
+                                chosen_idx = i
+                                break
+
+                        # 들어갈 게 하나도 없는 경우
+                        if chosen_idx is None:
+                            # in-flight 0인데 아무것도 안 들어가면 → 단일 파일이 한도 초과
+                            if in_flight_b[0] == 0:
+                                # 가장 작은 것 단독 처리 (어쩔 수 없음)
+                                smallest_i = min(
+                                    range(len(remaining)),
+                                    key=lambda j: remaining[j].get('Size', 0) or 0,
+                                )
+                                sz = remaining[smallest_i].get('Size', 0) or 0
+                                self._log(
+                                    f'  ⚠ 한도 초과 단독 처리: {remaining[smallest_i].get("Name")} '
+                                    f'({sz/GIB:.2f} GB > 한도 {max_bytes/GIB:.2f} GB)',
+                                    'WARN',
+                                )
+                                chosen_idx = smallest_i
+                            else:
+                                now = time.time()
+                                if now - last_wait_log > 10:
+                                    sizes = [(r.get('Size', 0) or 0)/GIB for r in remaining]
+                                    self._log(
+                                        f'  · capa 대기: 남은 {len(remaining)}개 모두 '
+                                        f'들어갈 자리 없음 (in-flight {in_flight_b[0]/GIB:.2f} GB, '
+                                        f'최소 {min(sizes):.2f} GB)'
+                                    )
+                                    last_wait_log = now
+                                cv.wait(timeout=5)
+                                continue
+
+                        last_wait_log = 0
+                        f    = remaining.pop(chosen_idx)
+                        size = f.get('Size', 0) or 0
                         in_flight_b[0] += size
+
+                    name = f.get('Name', '?')
                     add_inflight(name, size)
 
                     try:
