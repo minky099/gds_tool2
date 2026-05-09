@@ -56,6 +56,7 @@ class ModuleMain(PluginModuleBase):
             'main_nas_password':     '',                       # Fernet 암호화 저장
             'main_encrypt_key':      '',                       # Fernet key
             'main_script_path':         '/volume1/MK/rclone_move_one.sh',
+            'main_dest_path':           '/volume1/MK/Downloads/',
             'main_gdrive_remote':       'GDG:/Downloads',
             'main_max_batch_gb':        str(DEFAULT_BATCH_GB),    # 동시 in-flight 최대 합계 (GB)
             'main_concurrent_moves':    str(DEFAULT_CONCURRENT),  # 동시 NAS rclone 개수
@@ -745,9 +746,13 @@ class ModuleMain(PluginModuleBase):
     # ── NAS 단일 파일 이동 ────────────────────────────────────────
     def _run_nas_move_one(self, name, streams, progress_cb=None):
         script = P.ModelSetting.get('main_script_path')
+        dest   = (P.ModelSetting.get('main_dest_path') or '').strip()
+        cmd_parts = ['bash', shlex.quote(script), shlex.quote(name), str(int(streams))]
+        if dest:
+            cmd_parts.append(shlex.quote(dest))
         # rclone --stats 1s 출력은 stderr 로 가므로 2>&1 로 stdout 에 합침.
-        cmd = f'bash {shlex.quote(script)} {shlex.quote(name)} {int(streams)} 2>&1'
-        self._log(f'  → NAS 이동 시작: {name} (streams={streams})')
+        cmd = ' '.join(cmd_parts) + ' 2>&1'
+        self._log(f'  → NAS 이동 시작: {name} → {dest or "(스크립트 기본값)"} (streams={streams})')
         try:
             self._ensure_ssh()
         except Exception as e:
@@ -941,10 +946,21 @@ class ModuleMain(PluginModuleBase):
                             self._is_running = True
                             self._stop_flag  = False
                     if ret['ret'] == 'success':
+                        # arg2 포맷: "<rec>" 또는 "<rec>|<dest_path>"
+                        raw2 = arg2 or ''
+                        if '|' in raw2:
+                            rec_part, dest_part = raw2.split('|', 1)
+                        else:
+                            rec_part, dest_part = raw2, ''
                         try:
                             P.ModelSetting.set('main_last_source_id', fid)
-                            if arg2 in ('0', '1'):
-                                P.ModelSetting.set('main_recursive', 'True' if arg2 == '1' else 'False')
+                            if rec_part in ('0', '1'):
+                                P.ModelSetting.set(
+                                    'main_recursive',
+                                    'True' if rec_part == '1' else 'False',
+                                )
+                            if dest_part:
+                                P.ModelSetting.set('main_dest_path', dest_part)
                         except Exception:
                             pass
                         t = threading.Thread(
@@ -1006,6 +1022,30 @@ class ModuleMain(PluginModuleBase):
                 else:
                     n = Model.delete_all(0)
                     ret['msg'] = f'{n}건 삭제'
+
+            elif command == 'mkdir_dest':
+                parent = (arg1 or '').strip().rstrip('/')
+                sub    = (arg2 or '').strip().strip('/')
+                if not parent or not sub:
+                    ret['ret'] = 'error'
+                    ret['msg'] = '경로 또는 폴더명이 비었습니다.'
+                else:
+                    new_path = parent + '/' + sub + '/'
+                    try:
+                        code, out, err = self._ssh_exec(
+                            f'mkdir -p {shlex.quote(new_path)} && echo OK', timeout=10
+                        )
+                        if not self._is_running:
+                            self._ssh_close()
+                        if code == 0 and 'OK' in (out or ''):
+                            ret['msg'] = f'생성: {new_path}'
+                            ret['new_path'] = new_path
+                        else:
+                            ret['ret'] = 'error'
+                            ret['msg'] = f'mkdir 실패 ({code}): {(err or out)[:200]}'
+                    except Exception as e:
+                        ret['ret'] = 'error'
+                        ret['msg'] = f'SSH 오류: {e}'
 
             elif command == 'list_bookmarks':
                 Model = getattr(P, 'ModelSourceBookmark', None)
