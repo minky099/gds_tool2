@@ -13,7 +13,7 @@
   {{ macros.setting_input_text('main_nas_user', 'SSH User', value=arg['main_nas_user']) }}
   {{ macros.setting_input_text('tmp_main_nas_password', 'SSH Password', value='', type='password', placeholder='변경 시만 입력', desc=['공란이면 기존 비밀번호 유지. 입력 시 암호화되어 저장됩니다.']) }}
   {{ macros.setting_input_text_and_buttons('main_script_path', 'NAS 스크립트 경로', [['ssh_test_btn', 'SSH 테스트']], value=arg['main_script_path'], desc=['파일 1개씩 받는 rclone_move_one.sh. 인자: <filename> <streams> [dest_path]']) }}
-  {{ macros.setting_input_text_and_buttons('main_dest_path', 'NAS 이동 목적지', [['mkdir_btn', '새 폴더']], value=arg['main_dest_path'], desc=['NAS 측 도착 디렉토리. "새 폴더" 클릭 시 SSH 로 mkdir 후 이 경로 끝에 추가됨. 시작 시점 입력값이 우선 적용됨.']) }}
+  {{ macros.setting_input_text_and_buttons('main_dest_path', 'NAS 이동 목적지', [['browse_btn', '탐색'], ['mkdir_btn', '새 폴더']], value=arg.get('main_dest_path', '/volume1/MK/Downloads/'), desc=['NAS 측 도착 디렉토리. 탐색 버튼으로 폴더 선택, 새 폴더로 SSH mkdir. 시작 시 입력값이 우선 적용됨.']) }}
   {{ macros.setting_input_text('main_gdrive_remote', '내 드라이브 Remote', value=arg['main_gdrive_remote'], desc=['gds_tool 이 파일을 복사할 대상. 예: GDG:/Downloads']) }}
 
   {{ macros.m_hr() }}
@@ -25,6 +25,22 @@
   {{ macros.setting_input_int('main_copy_timeout', '파일별 도착 타임아웃 (초)', value=arg['main_copy_timeout']) }}
   {{ macros.setting_checkbox('main_recursive', '하위 폴더 재귀 처리', value=arg['main_recursive'], desc=['ON 시 모든 하위 폴더의 파일까지 처리. 동일 파일명 충돌 주의.']) }}
 </form>
+
+<div id="browse-panel" class="mt-2 p-2" style="display:none; border:1px solid #ced4da; border-radius:4px; max-width:680px;">
+  <div class="d-flex align-items-center mb-2" style="font-size:12px;">
+    <strong class="mr-2">현재:</strong>
+    <span id="browse-current-path" class="text-muted mr-2" style="flex:1; word-break:break-all; font-family:monospace;"></span>
+    <button type="button" id="browse_up_btn" class="btn btn-sm btn-outline-secondary mr-1">↑ 상위</button>
+    <button type="button" id="browse_close_btn" class="btn btn-sm btn-outline-secondary">닫기</button>
+  </div>
+  <div id="browse-list" style="max-height:240px; overflow-y:auto; border:1px solid #eee; padding:6px; font-size:12px;">
+    <div class="text-muted">로딩...</div>
+  </div>
+  <div class="mt-2">
+    <button type="button" id="browse_select_btn" class="btn btn-sm btn-success mr-1">이 폴더 선택</button>
+    <button type="button" id="browse_mkdir_btn" class="btn btn-sm btn-outline-primary">여기에 새 폴더</button>
+  </div>
+</div>
 
 {{ macros.m_hr() }}
 
@@ -150,6 +166,88 @@ $("body").on('click', '#mkdir_btn', function(e) {
     }
   });
 });
+
+// ─── 폴더 탐색기 ───────────────────────────────────────────
+var browseCurrentPath = '';
+
+$("body").on('click', '#browse_btn', function(e) {
+  e.preventDefault();
+  var p = $('#main_dest_path').val().trim() || '/';
+  $('#browse-panel').show();
+  loadBrowse(p);
+});
+
+$("body").on('click', '#browse_close_btn', function(e) {
+  e.preventDefault();
+  $('#browse-panel').hide();
+});
+
+$("body").on('click', '#browse_up_btn', function(e) {
+  e.preventDefault();
+  if (!browseCurrentPath || browseCurrentPath === '/') return;
+  var p = browseCurrentPath.replace(/\/+$/, '');
+  var parts = p.split('/');
+  parts.pop();
+  var parent = parts.join('/') || '/';
+  if (parent !== '/' && !parent.endsWith('/')) parent += '/';
+  loadBrowse(parent);
+});
+
+$("body").on('click', '.browse-dir', function(e) {
+  e.preventDefault();
+  var dir = $(this).data('dir');
+  if (!dir) return;
+  var base = browseCurrentPath || '/';
+  if (!base.endsWith('/')) base += '/';
+  loadBrowse(base + dir + '/');
+});
+
+$("body").on('click', '#browse_select_btn', function(e) {
+  e.preventDefault();
+  if (!browseCurrentPath) return;
+  $('#main_dest_path').val(browseCurrentPath);
+  $('#browse-panel').hide();
+});
+
+$("body").on('click', '#browse_mkdir_btn', function(e) {
+  e.preventDefault();
+  if (!browseCurrentPath) return;
+  var sub = prompt('새 폴더 이름 (현재 위치에 생성):');
+  if (sub === null) return;
+  sub = (sub || '').trim();
+  if (!sub) return;
+  globalSendCommand('mkdir_dest', browseCurrentPath, sub, '', function(ret) {
+    if (ret && ret.ret === 'success') {
+      // 새 폴더 생성 후 그 위치로 이동
+      var p = browseCurrentPath;
+      if (!p.endsWith('/')) p += '/';
+      loadBrowse(p + sub + '/');
+    }
+  });
+});
+
+function loadBrowse(path) {
+  globalSendCommand('list_dir', path, '', '', function(ret) {
+    if (!ret) return;
+    browseCurrentPath = (ret.path || path);
+    if (!browseCurrentPath.endsWith('/')) browseCurrentPath += '/';
+    $('#browse-current-path').text(browseCurrentPath);
+    var $list = $('#browse-list').empty();
+    var dirs = ret.dirs || [];
+    if (dirs.length === 0) {
+      $list.append($('<div class="text-muted"></div>').text('하위 폴더 없음'));
+      return;
+    }
+    dirs.forEach(function(d) {
+      var $a = $('<a href="#" class="browse-dir"></a>')
+                  .attr('data-dir', d)
+                  .css({display:'inline-block', padding:'1px 0'})
+                  .append('📁 ');
+      $a.append(document.createTextNode(d));
+      $list.append($('<div></div>').append($a));
+    });
+  });
+}
 
 $("body").on('click', '#select_all_btn', function(e) {
   e.preventDefault();
@@ -368,7 +466,7 @@ $("body").on('click', '#bookmark_del_btn', function(e) {
 
 $(document).ready(function() {
   // 매크로가 만든 button들에 type 강제 지정 (iOS Safari가 form submit 으로 해석하는 경우 방지)
-  $('#preview_btn, #start_btn, #stop_btn, #ssh_test_btn, #mkdir_btn').attr('type', 'button');
+  $('#preview_btn, #start_btn, #stop_btn, #ssh_test_btn, #mkdir_btn, #browse_btn').attr('type', 'button');
   refreshStatus();
   loadBookmarks();
 });
