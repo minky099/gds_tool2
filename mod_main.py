@@ -1047,30 +1047,6 @@ class ModuleMain(PluginModuleBase):
                     ret['dirs'] = []
                     ret['path'] = path
 
-            elif command == 'mkdir_dest':
-                parent = (arg1 or '').strip().rstrip('/')
-                sub    = (arg2 or '').strip().strip('/')
-                if not parent or not sub:
-                    ret['ret'] = 'error'
-                    ret['msg'] = '경로 또는 폴더명이 비었습니다.'
-                else:
-                    new_path = parent + '/' + sub + '/'
-                    try:
-                        code, out, err = self._ssh_exec(
-                            f'mkdir -p {shlex.quote(new_path)} && echo OK', timeout=10
-                        )
-                        if not self._is_running:
-                            self._ssh_close()
-                        if code == 0 and 'OK' in (out or ''):
-                            ret['msg'] = f'생성: {new_path}'
-                            ret['new_path'] = new_path
-                        else:
-                            ret['ret'] = 'error'
-                            ret['msg'] = f'mkdir 실패 ({code}): {(err or out)[:200]}'
-                    except Exception as e:
-                        ret['ret'] = 'error'
-                        ret['msg'] = f'SSH 오류: {e}'
-
             elif command == 'list_bookmarks':
                 Model = getattr(P, 'ModelSourceBookmark', None)
                 if Model is None:
