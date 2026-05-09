@@ -1,23 +1,25 @@
 #!/bin/bash
-# Usage: rclone_move_one.sh <filename> [multi_thread_streams]
+# Usage: rclone_move_one.sh <filename> [multi_thread_streams] [dest_path]
 #
 # Moves a single file from the user's My Drive (GDG:/Downloads/<filename>)
-# to the local NAS download path.  Designed to be invoked many times in
+# to a NAS local directory.  Designed to be invoked many times in
 # parallel — each invocation handles exactly one file, so concurrent
 # rclone processes never race on the same source.
 
 NAME="$1"
 STREAMS="${2:-4}"
+DST="${3:-/volume1/MK/Downloads/}"
 
 if [ -z "$NAME" ]; then
-    echo "Usage: $0 <filename> [multi_thread_streams]"
+    echo "Usage: $0 <filename> [streams] [dest_path]"
     exit 1
 fi
 
-SRC="GDG:/Downloads/$NAME"
-DST="/volume1/MK/Downloads/"
+mkdir -p "$DST"
 
-echo "=== rclone_move_one start: $NAME (streams=$STREAMS) ==="
+SRC="GDG:/Downloads/$NAME"
+
+echo "=== rclone_move_one start: $NAME -> $DST (streams=$STREAMS) ==="
 rclone move "$SRC" "$DST" \
     --config /volume1/MK/rclone.conf \
     --log-level INFO \
