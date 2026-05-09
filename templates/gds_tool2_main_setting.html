@@ -26,33 +26,6 @@
   {{ macros.setting_checkbox('main_recursive', '하위 폴더 재귀 처리', value=arg['main_recursive'], desc=['ON 시 모든 하위 폴더의 파일까지 처리. 동일 파일명 충돌 주의.']) }}
 </form>
 
-<div class="modal fade" id="browse-modal" tabindex="-1" role="dialog" aria-labelledby="browse-modal-title" aria-hidden="true">
-  <div class="modal-dialog modal-lg" role="document">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="browse-modal-title">NAS 폴더 탐색</h5>
-        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-          <span aria-hidden="true">&times;</span>
-        </button>
-      </div>
-      <div class="modal-body">
-        <div class="d-flex align-items-center mb-2" style="font-size:13px;">
-          <strong class="mr-2">현재:</strong>
-          <span id="browse-current-path" class="text-muted mr-2" style="flex:1; word-break:break-all; font-family:monospace;"></span>
-          <button type="button" id="browse_up_btn" class="btn btn-sm btn-outline-primary">↑ 상위</button>
-        </div>
-        <div id="browse-list" style="max-height:360px; overflow-y:auto; border:1px solid #ccc; padding:8px; font-size:13px;">
-          <div class="text-muted">로딩...</div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" id="browse_select_btn" class="btn btn-sm btn-success">이 폴더 선택</button>
-        <button type="button" class="btn btn-sm btn-outline-primary" data-dismiss="modal">닫기</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 {{ macros.m_hr() }}
 
 <h5>배치 실행</h5>
@@ -163,43 +136,13 @@ $("body").on('click', '#start_btn', function(e) {
   });
 });
 
-// ─── 폴더 탐색기 (Bootstrap 4 modal) ───────────────────────
-var browseCurrentPath = '';
-
+// ─── 폴더 탐색기 (프레임워크 globalSelectLocalFolder 모달 사용) ──
 $("body").on('click', '#browse_btn', function(e) {
   e.preventDefault();
   var p = $('#main_dest_path').val().trim() || '/';
-  $('#browse-modal').modal('show');
-  loadBrowse(p);
-});
-
-$("body").on('click', '#browse_up_btn', function(e) {
-  e.preventDefault();
-  if (!browseCurrentPath || browseCurrentPath === '/') return;
-  var p = browseCurrentPath.replace(/\/+$/, '');
-  var parts = p.split('/');
-  parts.pop();
-  var parent = parts.join('/') || '/';
-  if (parent !== '/' && !parent.endsWith('/')) parent += '/';
-  loadBrowse(parent);
-});
-
-$("body").on('click', '.browse-dir', function(e) {
-  e.preventDefault();
-  var dir = $(this).data('dir');
-  if (!dir) return;
-  var base = browseCurrentPath || '/';
-  if (!base.endsWith('/')) base += '/';
-  loadBrowse(base + dir + '/');
-});
-
-$("body").on('click', '#browse_select_btn', function(e) {
-  e.preventDefault();
-  if (!browseCurrentPath) return;
-  var $inp = $('#main_dest_path');
-  $inp.val(browseCurrentPath);
-  // modal 닫힘 애니메이션 끝난 후 입력칸 포커스 + 커서 끝으로
-  $('#browse-modal').one('hidden.bs.modal', function() {
+  globalSelectLocalFolder('NAS 폴더 선택', p, function(selected) {
+    var $inp = $('#main_dest_path');
+    $inp.val(selected);
     var el = $inp.get(0);
     if (el) {
       el.focus();
@@ -209,31 +152,7 @@ $("body").on('click', '#browse_select_btn', function(e) {
       } catch (err) { /* mobile keyboards may not support */ }
     }
   });
-  $('#browse-modal').modal('hide');
 });
-
-function loadBrowse(path) {
-  globalSendCommand('list_dir', path, '', '', function(ret) {
-    if (!ret) return;
-    browseCurrentPath = (ret.path || path);
-    if (!browseCurrentPath.endsWith('/')) browseCurrentPath += '/';
-    $('#browse-current-path').text(browseCurrentPath);
-    var $list = $('#browse-list').empty();
-    var dirs = ret.dirs || [];
-    if (dirs.length === 0) {
-      $list.append($('<div class="text-muted"></div>').text('하위 폴더 없음'));
-      return;
-    }
-    dirs.forEach(function(d) {
-      var $a = $('<a href="#" class="browse-dir"></a>')
-                  .attr('data-dir', d)
-                  .css({display:'inline-block', padding:'1px 0'})
-                  .append('📁 ');
-      $a.append(document.createTextNode(d));
-      $list.append($('<div></div>').append($a));
-    });
-  });
-}
 
 $("body").on('click', '#select_all_btn', function(e) {
   e.preventDefault();
