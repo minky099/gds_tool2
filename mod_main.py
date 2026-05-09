@@ -1023,6 +1023,30 @@ class ModuleMain(PluginModuleBase):
                     n = Model.delete_all(0)
                     ret['msg'] = f'{n}건 삭제'
 
+            elif command == 'list_dir':
+                # NAS 폴더 탐색기용 (SSH ls)
+                path = (arg1 or '').strip() or '/'
+                if not path.endswith('/'):
+                    path += '/'
+                try:
+                    sh = (
+                        f'cd {shlex.quote(path)} 2>/dev/null && '
+                        f'ls -1 -p 2>/dev/null | grep "/$" | sed "s|/$||" | sort'
+                    )
+                    code, out, err = self._ssh_exec(sh, timeout=10)
+                    if not self._is_running:
+                        self._ssh_close()
+                    dirs = [d for d in (out or '').split('\n') if d.strip()]
+                    ret['dirs'] = dirs
+                    ret['path'] = path
+                    if code != 0 and not dirs:
+                        ret['msg'] = '경로 접근 불가 또는 비어있음'
+                except Exception as e:
+                    ret['ret']  = 'error'
+                    ret['msg']  = f'SSH 오류: {e}'
+                    ret['dirs'] = []
+                    ret['path'] = path
+
             elif command == 'list_bookmarks':
                 Model = getattr(P, 'ModelSourceBookmark', None)
                 if Model is None:
