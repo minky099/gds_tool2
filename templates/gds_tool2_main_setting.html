@@ -13,7 +13,7 @@
   {{ macros.setting_input_text('main_nas_user', 'SSH User', value=arg['main_nas_user']) }}
   {{ macros.setting_input_text('tmp_main_nas_password', 'SSH Password', value='', type='password', placeholder='변경 시만 입력', desc=['공란이면 기존 비밀번호 유지. 입력 시 암호화되어 저장됩니다.']) }}
   {{ macros.setting_input_text_and_buttons('main_script_path', 'NAS 스크립트 경로', [['ssh_test_btn', 'SSH 테스트']], value=arg['main_script_path'], desc=['파일 1개씩 받는 rclone_move_one.sh. 인자: <filename> <streams> [dest_path]']) }}
-  {{ macros.setting_input_text_and_buttons('main_dest_path', 'NAS 이동 목적지', [['browse_btn', '탐색'], ['mkdir_btn', '새 폴더']], value=arg.get('main_dest_path', '/volume1/MK/Downloads/'), desc=['NAS 측 도착 디렉토리. 탐색 버튼으로 폴더 선택, 새 폴더로 SSH mkdir. 시작 시 입력값이 우선 적용됨.']) }}
+  {{ macros.setting_input_text_and_buttons('main_dest_path', 'NAS 이동 목적지', [['browse_btn', '탐색']], value=arg.get('main_dest_path', '/volume1/MK/Downloads/'), desc=['NAS 측 도착 디렉토리. 탐색으로 기존 폴더 선택 후 끝에 새 경로 추가 입력 가능. rclone이 미존재 폴더는 자동 생성. 시작 시 입력값이 우선 적용됨.']) }}
   {{ macros.setting_input_text('main_gdrive_remote', '내 드라이브 Remote', value=arg['main_gdrive_remote'], desc=['gds_tool 이 파일을 복사할 대상. 예: GDG:/Downloads']) }}
 
   {{ macros.m_hr() }}
@@ -37,8 +37,7 @@
     <div class="text-muted">로딩...</div>
   </div>
   <div class="mt-2">
-    <button type="button" id="browse_select_btn" class="btn btn-sm btn-success mr-1">이 폴더 선택</button>
-    <button type="button" id="browse_mkdir_btn" class="btn btn-sm btn-outline-primary">여기에 새 폴더</button>
+    <button type="button" id="browse_select_btn" class="btn btn-sm btn-success">이 폴더 선택</button>
   </div>
 </div>
 
@@ -152,21 +151,6 @@ $("body").on('click', '#start_btn', function(e) {
   });
 });
 
-$("body").on('click', '#mkdir_btn', function(e) {
-  e.preventDefault();
-  var current = $('#main_dest_path').val().trim();
-  if (!current) { alert('현재 경로가 비어 있습니다.'); return; }
-  var sub = prompt('새 폴더 이름 (현재 경로 아래에 생성):');
-  if (sub === null) return;
-  sub = (sub || '').trim();
-  if (!sub) return;
-  globalSendCommand('mkdir_dest', current, sub, '', function(ret) {
-    if (ret && ret.ret === 'success' && ret.new_path) {
-      $('#main_dest_path').val(ret.new_path);
-    }
-  });
-});
-
 // ─── 폴더 탐색기 ───────────────────────────────────────────
 var browseCurrentPath = '';
 
@@ -205,25 +189,18 @@ $("body").on('click', '.browse-dir', function(e) {
 $("body").on('click', '#browse_select_btn', function(e) {
   e.preventDefault();
   if (!browseCurrentPath) return;
-  $('#main_dest_path').val(browseCurrentPath);
+  var $inp = $('#main_dest_path');
+  $inp.val(browseCurrentPath);
   $('#browse-panel').hide();
-});
-
-$("body").on('click', '#browse_mkdir_btn', function(e) {
-  e.preventDefault();
-  if (!browseCurrentPath) return;
-  var sub = prompt('새 폴더 이름 (현재 위치에 생성):');
-  if (sub === null) return;
-  sub = (sub || '').trim();
-  if (!sub) return;
-  globalSendCommand('mkdir_dest', browseCurrentPath, sub, '', function(ret) {
-    if (ret && ret.ret === 'success') {
-      // 새 폴더 생성 후 그 위치로 이동
-      var p = browseCurrentPath;
-      if (!p.endsWith('/')) p += '/';
-      loadBrowse(p + sub + '/');
-    }
-  });
+  // 선택 후 입력칸에 포커스 + 커서를 끝으로 → 사용자가 바로 추가 타이핑 가능
+  var el = $inp.get(0);
+  if (el) {
+    el.focus();
+    try {
+      var len = $inp.val().length;
+      el.setSelectionRange(len, len);
+    } catch (err) { /* mobile keyboards may not support */ }
+  }
 });
 
 function loadBrowse(path) {
@@ -466,7 +443,7 @@ $("body").on('click', '#bookmark_del_btn', function(e) {
 
 $(document).ready(function() {
   // 매크로가 만든 button들에 type 강제 지정 (iOS Safari가 form submit 으로 해석하는 경우 방지)
-  $('#preview_btn, #start_btn, #stop_btn, #ssh_test_btn, #mkdir_btn, #browse_btn').attr('type', 'button');
+  $('#preview_btn, #start_btn, #stop_btn, #ssh_test_btn, #browse_btn').attr('type', 'button');
   refreshStatus();
   loadBookmarks();
 });
