@@ -11,7 +11,8 @@ setting = {
                 'uri': 'main',
                 'name': '배치 복사',
                 'list': [
-                    {'uri': 'setting', 'name': '설정/실행'},
+                    {'uri': 'request', 'name': '실행'},
+                    {'uri': 'setting', 'name': '설정'},
                     {'uri': 'history', 'name': '작업 이력'},
                 ]
             },
