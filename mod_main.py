@@ -48,7 +48,7 @@ RCLONE_STATS_RE = re.compile(
 class ModuleMain(PluginModuleBase):
 
     def __init__(self, P):
-        super(ModuleMain, self).__init__(P, name='main', first_menu='request')
+        super(ModuleMain, self).__init__(P, name='main', first_menu='setting')
         self.db_default = {
             'main_nas_ip':           '',
             'main_nas_port':         '22',
