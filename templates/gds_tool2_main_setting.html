@@ -12,7 +12,8 @@
   {{ macros.setting_input_int('main_nas_port', 'SSH Port', value=arg['main_nas_port']) }}
   {{ macros.setting_input_text('main_nas_user', 'SSH User', value=arg['main_nas_user']) }}
   {{ macros.setting_input_text('tmp_main_nas_password', 'SSH Password', value='', type='password', placeholder='변경 시만 입력', desc=['공란이면 기존 비밀번호 유지. 입력 시 암호화되어 저장됩니다.']) }}
-  {{ macros.setting_input_text_and_buttons('main_script_path', 'NAS 스크립트 경로', [['ssh_test_btn', 'SSH 테스트']], value=arg['main_script_path'], desc=['파일 1개씩 받는 rclone_move_one.sh. 인자: <filename> <streams>']) }}
+  {{ macros.setting_input_text_and_buttons('main_script_path', 'NAS 스크립트 경로', [['ssh_test_btn', 'SSH 테스트']], value=arg['main_script_path'], desc=['파일 1개씩 받는 rclone_move_one.sh. 인자: <filename> <streams> [dest_path]']) }}
+  {{ macros.setting_input_text_and_buttons('main_dest_path', 'NAS 이동 목적지', [['mkdir_btn', '새 폴더']], value=arg['main_dest_path'], desc=['NAS 측 도착 디렉토리. "새 폴더" 클릭 시 SSH 로 mkdir 후 이 경로 끝에 추가됨. 시작 시점 입력값이 우선 적용됨.']) }}
   {{ macros.setting_input_text('main_gdrive_remote', '내 드라이브 Remote', value=arg['main_gdrive_remote'], desc=['gds_tool 이 파일을 복사할 대상. 예: GDG:/Downloads']) }}
 
   {{ macros.m_hr() }}
@@ -110,6 +111,9 @@ $("body").on('click', '#start_btn', function(e) {
   var fid = $('#main_last_source_id').val().trim();
   if (!fid) { alert('폴더 ID를 입력하세요.'); return; }
   var rec = $('#main_recursive').prop('checked') ? '1' : '0';
+  var dest = $('#main_dest_path').val().trim();
+  // arg2 = rec, 또는 rec|dest (저장 안 했어도 이번 실행에 반영되도록)
+  var arg2 = rec + (dest ? '|' + dest : '');
 
   var selectedIds = '';
   var $cbs = $('.file-cb');
@@ -124,10 +128,25 @@ $("body").on('click', '#start_btn', function(e) {
   }
   // 미리보기 안 했으면 selectedIds='' → 백엔드가 폴더 내 전체 처리 (기존 동작)
 
-  globalSendCommand('start_batch', fid, rec, selectedIds, function(ret) {
+  globalSendCommand('start_batch', fid, arg2, selectedIds, function(ret) {
     if (ret.ret === 'success') {
       $('#batch-status').show();
       setBadge(true);
+    }
+  });
+});
+
+$("body").on('click', '#mkdir_btn', function(e) {
+  e.preventDefault();
+  var current = $('#main_dest_path').val().trim();
+  if (!current) { alert('현재 경로가 비어 있습니다.'); return; }
+  var sub = prompt('새 폴더 이름 (현재 경로 아래에 생성):');
+  if (sub === null) return;
+  sub = (sub || '').trim();
+  if (!sub) return;
+  globalSendCommand('mkdir_dest', current, sub, '', function(ret) {
+    if (ret && ret.ret === 'success' && ret.new_path) {
+      $('#main_dest_path').val(ret.new_path);
     }
   });
 });
@@ -349,7 +368,7 @@ $("body").on('click', '#bookmark_del_btn', function(e) {
 
 $(document).ready(function() {
   // 매크로가 만든 button들에 type 강제 지정 (iOS Safari가 form submit 으로 해석하는 경우 방지)
-  $('#preview_btn, #start_btn, #stop_btn, #ssh_test_btn').attr('type', 'button');
+  $('#preview_btn, #start_btn, #stop_btn, #ssh_test_btn, #mkdir_btn').attr('type', 'button');
   refreshStatus();
   loadBookmarks();
 });
