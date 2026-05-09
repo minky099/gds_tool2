@@ -26,18 +26,30 @@
   {{ macros.setting_checkbox('main_recursive', '하위 폴더 재귀 처리', value=arg['main_recursive'], desc=['ON 시 모든 하위 폴더의 파일까지 처리. 동일 파일명 충돌 주의.']) }}
 </form>
 
-<div id="browse-panel" class="mt-2 p-2" style="display:none; border:1px solid #ced4da; border-radius:4px; max-width:680px;">
-  <div class="d-flex align-items-center mb-2" style="font-size:12px;">
-    <strong class="mr-2">현재:</strong>
-    <span id="browse-current-path" class="text-muted mr-2" style="flex:1; word-break:break-all; font-family:monospace;"></span>
-    <button type="button" id="browse_up_btn" class="btn btn-sm btn-outline-secondary mr-1">↑ 상위</button>
-    <button type="button" id="browse_close_btn" class="btn btn-sm btn-outline-secondary">닫기</button>
-  </div>
-  <div id="browse-list" style="max-height:240px; overflow-y:auto; border:1px solid #eee; padding:6px; font-size:12px;">
-    <div class="text-muted">로딩...</div>
-  </div>
-  <div class="mt-2">
-    <button type="button" id="browse_select_btn" class="btn btn-sm btn-success">이 폴더 선택</button>
+<div class="modal fade" id="browse-modal" tabindex="-1" role="dialog" aria-labelledby="browse-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="browse-modal-title">NAS 폴더 탐색</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex align-items-center mb-2" style="font-size:13px;">
+          <strong class="mr-2">현재:</strong>
+          <span id="browse-current-path" class="text-muted mr-2" style="flex:1; word-break:break-all; font-family:monospace;"></span>
+          <button type="button" id="browse_up_btn" class="btn btn-sm btn-outline-primary">↑ 상위</button>
+        </div>
+        <div id="browse-list" style="max-height:360px; overflow-y:auto; border:1px solid #ccc; padding:8px; font-size:13px;">
+          <div class="text-muted">로딩...</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="browse_select_btn" class="btn btn-sm btn-success">이 폴더 선택</button>
+        <button type="button" class="btn btn-sm btn-outline-primary" data-dismiss="modal">닫기</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -151,19 +163,14 @@ $("body").on('click', '#start_btn', function(e) {
   });
 });
 
-// ─── 폴더 탐색기 ───────────────────────────────────────────
+// ─── 폴더 탐색기 (Bootstrap 4 modal) ───────────────────────
 var browseCurrentPath = '';
 
 $("body").on('click', '#browse_btn', function(e) {
   e.preventDefault();
   var p = $('#main_dest_path').val().trim() || '/';
-  $('#browse-panel').show();
+  $('#browse-modal').modal('show');
   loadBrowse(p);
-});
-
-$("body").on('click', '#browse_close_btn', function(e) {
-  e.preventDefault();
-  $('#browse-panel').hide();
 });
 
 $("body").on('click', '#browse_up_btn', function(e) {
@@ -191,16 +198,18 @@ $("body").on('click', '#browse_select_btn', function(e) {
   if (!browseCurrentPath) return;
   var $inp = $('#main_dest_path');
   $inp.val(browseCurrentPath);
-  $('#browse-panel').hide();
-  // 선택 후 입력칸에 포커스 + 커서를 끝으로 → 사용자가 바로 추가 타이핑 가능
-  var el = $inp.get(0);
-  if (el) {
-    el.focus();
-    try {
-      var len = $inp.val().length;
-      el.setSelectionRange(len, len);
-    } catch (err) { /* mobile keyboards may not support */ }
-  }
+  // modal 닫힘 애니메이션 끝난 후 입력칸 포커스 + 커서 끝으로
+  $('#browse-modal').one('hidden.bs.modal', function() {
+    var el = $inp.get(0);
+    if (el) {
+      el.focus();
+      try {
+        var len = $inp.val().length;
+        el.setSelectionRange(len, len);
+      } catch (err) { /* mobile keyboards may not support */ }
+    }
+  });
+  $('#browse-modal').modal('hide');
 });
 
 function loadBrowse(path) {
