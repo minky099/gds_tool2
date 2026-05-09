@@ -5,7 +5,7 @@ setting = {
     'home_module': 'main',
     'menu': {
         'uri': __package__,
-        'name': 'gds_tool2',
+        'name': '구드공 툴2',
         'list': [
             {
                 'uri': 'main',
