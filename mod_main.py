@@ -64,7 +64,8 @@ class ModuleMain(PluginModuleBase):
             'main_poll_interval':       '15',                     # 도착 polling 간격 (초)
             'main_copy_timeout':        '7200',                   # 파일별 도착 타임아웃 (초)
             'main_recursive':           'False',                  # 하위 폴더 재귀 처리
-            'main_last_source_id':      '',                       # 마지막으로 실행한 폴더 ID
+            'main_last_source_id':      '',                       # 마지막으로 실행한 공유드라이브 폴더 ID
+            'main_mydrive_last_folder': '',                       # 마지막으로 사용한 내 드라이브 폴더 경로
         }
         self._history_id  = None
         self._lock        = threading.Lock()
@@ -744,15 +745,25 @@ class ModuleMain(PluginModuleBase):
         self._pipeline_cv = None
 
     # ── NAS 단일 파일 이동 ────────────────────────────────────────
-    def _run_nas_move_one(self, name, streams, progress_cb=None):
+    def _run_nas_move_one(self, name, streams, src_folder=None, progress_cb=None):
         script = P.ModelSetting.get('main_script_path')
         dest   = (P.ModelSetting.get('main_dest_path') or '').strip()
-        cmd_parts = ['bash', shlex.quote(script), shlex.quote(name), str(int(streams))]
-        if dest:
-            cmd_parts.append(shlex.quote(dest))
+        if src_folder is None:
+            src_folder = (P.ModelSetting.get('main_gdrive_remote') or '').strip()
+        # 4-arg form: <name> <streams> <dest> <src_folder>
+        cmd_parts = [
+            'bash', shlex.quote(script),
+            shlex.quote(name),
+            str(int(streams)),
+            shlex.quote(dest),
+            shlex.quote(src_folder or ''),
+        ]
         # rclone --stats 1s 출력은 stderr 로 가므로 2>&1 로 stdout 에 합침.
         cmd = ' '.join(cmd_parts) + ' 2>&1'
-        self._log(f'  → NAS 이동 시작: {name} → {dest or "(스크립트 기본값)"} (streams={streams})')
+        self._log(
+            f'  → NAS 이동 시작: {name}  '
+            f'src={src_folder or "(스크립트 기본값)"} → {dest or "(스크립트 기본값)"} (streams={streams})'
+        )
         try:
             self._ensure_ssh()
         except Exception as e:
@@ -826,6 +837,177 @@ class ModuleMain(PluginModuleBase):
 
     def plugin_unload(self):
         self._ssh_close()
+
+    # ── 내 드라이브 → NAS (consumer-only 파이프라인) ─────────────
+    def _mydrive_worker(self, folder, dest, selected_names=None):
+        final_status = 'completed'
+        final_note   = ''
+        try:
+            with self._lock:
+                self._is_running = True
+                self._stop_flag  = False
+                self._logs       = []
+                self._progress   = self._fresh_progress()
+
+            try:
+                n_consumers = max(1, int(P.ModelSetting.get('main_concurrent_moves') or DEFAULT_CONCURRENT))
+            except ValueError:
+                n_consumers = DEFAULT_CONCURRENT
+            try:
+                n_streams = max(1, int(P.ModelSetting.get('main_multi_thread_streams') or DEFAULT_MTSTREAMS))
+            except ValueError:
+                n_streams = DEFAULT_MTSTREAMS
+
+            self._history_id = self._history_create(folder, 0)
+
+            self._log('SSH 연결 테스트...')
+            if not self._test_ssh():
+                self._log('SSH 연결 실패. 중단.', 'ERROR')
+                final_status = 'error'
+                final_note   = 'SSH 연결 실패'
+                return
+
+            self._log(f'내 드라이브 폴더 파일 목록: {folder}')
+            from support.expand.rclone import SupportRclone
+            try:
+                items = SupportRclone.lsjson(folder) or []
+            except Exception as e:
+                self._log(f'lsjson 오류: {e}', 'ERROR')
+                final_status = 'error'
+                final_note   = 'lsjson 실패'
+                return
+
+            files = [i for i in items if not i.get('IsDir')]
+            self._log(f'전체 {len(files)}개 파일')
+            if not files:
+                self._log('파일 없음.')
+                final_status = 'completed'
+                final_note   = '파일 없음'
+                return
+
+            if selected_names:
+                wanted = {s.strip() for s in selected_names.split(',') if s.strip()}
+                before = len(files)
+                files  = [f for f in files if f.get('Name') in wanted]
+                self._log(f'사용자 선택: {len(files)}개 (전체 {before}개 중)')
+                if not files:
+                    self._log('선택 0개. 종료.', 'WARN')
+                    final_status = 'completed'
+                    final_note   = '선택 0개'
+                    return
+
+            self._progress['total']      = len(files)
+            self._progress['concurrent'] = n_consumers
+            self._progress['streams']    = n_streams
+            self._progress['phase']      = 'pipeline'
+            self._emit_progress()
+            self._history_update(total_files=len(files), total_batches=0)
+
+            self._log(
+                f'내드라이브→NAS: 총 {len(files)}개 파일 / '
+                f'동시 mover {n_consumers}개 / streams={n_streams} → '
+                f'{dest or "(스크립트 기본값)"}'
+            )
+
+            self._mydrive_pipeline(files, folder, n_consumers, n_streams)
+
+            if self._stop_flag:
+                final_status = 'stopped'
+            elif self._progress['failed'] > 0:
+                final_note = f'{self._progress["failed"]}개 실패'
+
+            self._log(
+                f'전체 종료 — 성공 {self._progress["moved"]}, '
+                f'실패 {self._progress["failed"]} / 총 {self._progress["total"]}'
+            )
+        except Exception as e:
+            self._log(f'예외: {e}', 'ERROR')
+            P.logger.error(traceback.format_exc())
+            final_status = 'error'
+            final_note   = str(e)[:200]
+        finally:
+            self._history_finalize(final_status, final_note)
+            with self._lock:
+                self._is_running = False
+            self._progress['phase']     = ''
+            self._progress['in_flight'] = []
+            self._ssh_close()
+            try:
+                F.socketio.emit('gds_tool2_done', dict(self._progress), namespace='/framework')
+            except Exception:
+                pass
+
+    def _mydrive_pipeline(self, files, src_folder, n_consumers, n_streams):
+        ready_q   = queue.PriorityQueue()
+        ready_seq = [0]
+
+        # 작은 거 우선 — 큐에 일괄 투입 (capacity 제한 X, 동시 mover 수만 N)
+        for f in files:
+            size = f.get('Size', 0) or 0
+            ready_seq[0] += 1
+            ready_q.put((size, ready_seq[0], (f, size)))
+
+        def add_inflight(name, size):
+            with self._lock:
+                self._progress['in_flight'].append({
+                    'name':    name,
+                    'size_gb': size / GIB,
+                    'phase':   'move',
+                    'percent': 0,
+                    'speed':   '',
+                    'eta':     '',
+                })
+            self._emit_progress()
+
+        def update_inflight(name, **fields):
+            with self._lock:
+                for entry in self._progress['in_flight']:
+                    if entry['name'] == name:
+                        entry.update(fields)
+                        break
+            self._emit_progress()
+
+        def remove_inflight(name):
+            with self._lock:
+                self._progress['in_flight'] = [
+                    e for e in self._progress['in_flight'] if e['name'] != name
+                ]
+            self._emit_progress()
+
+        def consumer(idx):
+            while not self._stop_flag:
+                try:
+                    _, _, item = ready_q.get(timeout=1)
+                except queue.Empty:
+                    # 일괄 투입 모델이라 Empty == 모든 항목 처리됨
+                    return
+                f, size = item
+                name = f.get('Name', '?')
+                add_inflight(name, size)
+                try:
+                    ok = self._run_nas_move_one(
+                        name, n_streams, src_folder=src_folder,
+                        progress_cb=lambda pct, sp, eta_, _n=name: update_inflight(
+                            _n, percent=pct, speed=sp, eta=eta_
+                        ),
+                    )
+                    if ok:
+                        self._progress['moved'] += 1
+                    else:
+                        self._progress['failed'] += 1
+                except Exception as e:
+                    self._log(f'  ✗ 이동 예외: {name}: {e}', 'ERROR')
+                    self._progress['failed'] += 1
+                remove_inflight(name)
+
+        cons_ts = [
+            threading.Thread(target=consumer, args=(i,), name=f'gds2-mv-{i}', daemon=True)
+            for i in range(n_consumers)
+        ]
+        for t in cons_ts:
+            t.start()
+        for t in cons_ts:
+            t.join()
 
     # ── 이력 ──────────────────────────────────────────────────────
     def _history_model(self):
@@ -1046,6 +1228,84 @@ class ModuleMain(PluginModuleBase):
                     ret['msg']  = f'SSH 오류: {e}'
                     ret['dirs'] = []
                     ret['path'] = path
+
+            elif command == 'mydrive_list_dir':
+                # 내 드라이브 폴더 트리 탐색 (rclone lsjson)
+                path = (arg1 or '').strip()
+                if not path:
+                    path = (P.ModelSetting.get('main_gdrive_remote') or 'GDG:').strip()
+                try:
+                    from support.expand.rclone import SupportRclone
+                    items = SupportRclone.lsjson(path) or []
+                    dirs = sorted(
+                        [i.get('Name', '') for i in items if i.get('IsDir')],
+                        key=lambda s: s.lower(),
+                    )
+                    ret['dirs'] = dirs
+                    ret['path'] = path
+                    if not dirs and not items:
+                        ret['msg'] = '경로 접근 불가 또는 비어있음'
+                except Exception as e:
+                    ret['ret']  = 'error'
+                    ret['msg']  = f'lsjson 오류: {e}'
+                    ret['dirs'] = []
+                    ret['path'] = path
+
+            elif command == 'mydrive_preview':
+                folder = (arg1 or '').strip()
+                if not folder:
+                    ret['ret'] = 'error'
+                    ret['msg'] = '폴더 경로를 입력하세요.'
+                else:
+                    try:
+                        from support.expand.rclone import SupportRclone
+                        items = SupportRclone.lsjson(folder) or []
+                        files = [i for i in items if not i.get('IsDir')]
+                        ret['files']      = files
+                        ret['path']       = folder
+                        ret['total_size'] = sum((f.get('Size', 0) or 0) for f in files)
+                        ret['msg'] = (
+                            f'{len(files)}개 파일 / '
+                            f'{ret["total_size"]/GIB:.2f} GB'
+                        )
+                        try:
+                            P.ModelSetting.set('main_mydrive_last_folder', folder)
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        ret['ret']   = 'error'
+                        ret['msg']   = f'lsjson 오류: {e}'
+                        ret['files'] = []
+
+            elif command == 'mydrive_start':
+                folder = (arg1 or '').strip()
+                dest   = (arg2 or '').strip()
+                selected_names = (arg3 or '').strip()
+                if not folder:
+                    ret['ret'] = 'error'
+                    ret['msg'] = '내 드라이브 폴더 경로를 입력하세요.'
+                else:
+                    with self._lock:
+                        if self._is_running:
+                            ret['ret'] = 'error'
+                            ret['msg'] = '이미 실행 중입니다.'
+                        else:
+                            self._is_running = True
+                            self._stop_flag  = False
+                    if ret['ret'] == 'success':
+                        try:
+                            P.ModelSetting.set('main_mydrive_last_folder', folder)
+                            if dest:
+                                P.ModelSetting.set('main_dest_path', dest)
+                        except Exception:
+                            pass
+                        t = threading.Thread(
+                            target=self._mydrive_worker,
+                            args=(folder, dest, selected_names or None),
+                            daemon=True,
+                        )
+                        t.start()
+                        ret['msg'] = '내드라이브→NAS 시작!'
 
             elif command == 'list_bookmarks':
                 Model = getattr(P, 'ModelSourceBookmark', None)
