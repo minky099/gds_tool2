@@ -13,6 +13,7 @@ setting = {
                 'list': [
                     {'uri': 'setting', 'name': '설정'},
                     {'uri': 'request', 'name': '실행'},
+                    {'uri': 'mydrive', 'name': '내드라이브 이동'},
                     {'uri': 'history', 'name': '작업 이력'},
                 ]
             },
