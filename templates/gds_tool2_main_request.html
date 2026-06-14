@@ -99,9 +99,10 @@
               <div class="btn-group btn-group-sm flex-wrap mr-2" role="group" style="padding-left:5px; padding-top:0px">
                 <button type="button" id="gds2_browse_load_btn" class="btn btn-sm btn-outline-success">Load</button>
                 <button type="button" id="gds2_browse_up_btn" class="btn btn-sm btn-outline-success">상위</button>
+                <button type="button" id="gds2_browse_mkdir_btn" class="btn btn-sm btn-outline-success">새 폴더</button>
               </div>
             </div>
-            <div style="padding-left:20px; padding-top:5px;"><em>NAS의 폴더 목록을 SSH로 조회. 경로 직접 입력 후 Load 가능.</em></div>
+            <div style="padding-left:20px; padding-top:5px;"><em>NAS의 폴더 목록을 SSH로 조회. 경로 직접 입력 후 Load 가능. 새 폴더는 현재 경로 아래에 생성.</em></div>
           </div>
         </div>
         <div class="list-group" id="gds2_browse_list_group">
@@ -202,6 +203,23 @@ $("body").on('click', '#gds2_browse_up_btn', function(e) {
   if (parent !== '/' && !parent.endsWith('/')) parent += '/';
   $('#gds2_browse_path').val(parent);
   gds2BrowseLoad(parent);
+});
+
+$("body").on('click', '#gds2_browse_mkdir_btn', function(e) {
+  e.preventDefault();
+  var base = ($('#gds2_browse_path').val() || '/').trim();
+  if (!base) base = '/';
+  if (!base.endsWith('/')) base += '/';
+  var name = (window.prompt('생성할 폴더 이름 ('+ base +' 아래)', '') || '').trim();
+  if (!name) return;
+  if (name.indexOf('/') >= 0) { alert('이름에 / 는 사용할 수 없습니다.'); return; }
+  globalSendCommand('mkdir_nas', base, name, '', function(ret) {
+    if (!ret) return;
+    if (ret.ret !== 'success') { alert(ret.msg || '폴더 생성 실패'); return; }
+    var next = base + name + '/';
+    $('#gds2_browse_path').val(next);
+    gds2BrowseLoad(next);
+  });
 });
 
 $("body").on('click', '.gds2-browse-item', function(e) {

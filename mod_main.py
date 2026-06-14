@@ -1229,6 +1229,36 @@ class ModuleMain(PluginModuleBase):
                     ret['dirs'] = []
                     ret['path'] = path
 
+            elif command == 'mkdir_nas':
+                # NAS 새 폴더 생성 (SSH mkdir -p)
+                parent = (arg1 or '').strip() or '/'
+                name   = (arg2 or '').strip()
+                if not name:
+                    ret['ret'] = 'error'
+                    ret['msg'] = '폴더 이름이 비어있습니다.'
+                elif any(c in name for c in ('/', '\x00')):
+                    ret['ret'] = 'error'
+                    ret['msg'] = '폴더 이름에 / 는 사용할 수 없습니다.'
+                else:
+                    if not parent.endswith('/'):
+                        parent += '/'
+                    target = parent + name
+                    try:
+                        sh = f'mkdir -p {shlex.quote(target)}'
+                        code, out, err = self._ssh_exec(sh, timeout=10)
+                        if not self._is_running:
+                            self._ssh_close()
+                        if code == 0:
+                            ret['path'] = parent
+                            ret['created'] = name
+                            ret['msg']  = f'폴더 생성: {target}'
+                        else:
+                            ret['ret'] = 'error'
+                            ret['msg'] = f'mkdir 실패 (rc={code}): {(err or out or "").strip()[:200]}'
+                    except Exception as e:
+                        ret['ret'] = 'error'
+                        ret['msg'] = f'SSH 오류: {e}'
+
             elif command == 'mydrive_list_dir':
                 # 내 드라이브 폴더 트리 탐색 (rclone lsjson)
                 path = (arg1 or '').strip()
