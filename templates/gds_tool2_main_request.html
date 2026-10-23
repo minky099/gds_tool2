@@ -3,6 +3,22 @@
 
 <!-- 시작 시 입력값을 사용하므로 form#setting 안에 두지 않음. 자동저장 X. -->
 {{ macros.setting_input_text_and_buttons('main_dest_path', 'NAS 이동 목적지', [['browse_btn', '탐색']], value=arg.get('main_dest_path', '/volume1/MK/Downloads/'), desc=['NAS 측 도착 디렉토리. 탐색으로 기존 폴더 선택 후 끝에 새 경로 추가 입력 가능. rclone이 미존재 폴더는 자동 생성. 시작 클릭 시점 입력값이 적용 + 저장됨.']) }}
+
+<div class="row" style="padding-top:10px; padding-bottom:10px; align-items:center;">
+  <div class="col-sm-3 set-left"><strong>목적지 즐겨찾기</strong></div>
+  <div class="col-sm-9">
+    <div class="input-group col-sm-12">
+      <div class="d-flex align-items-center" style="font-size:12.5px; width:100%;">
+        <select id="dest_bookmark_select" class="form-control form-control-sm mr-2" style="max-width:340px;">
+          <option value="">-- 선택 --</option>
+        </select>
+        <button type="button" id="dest_bookmark_add_btn" class="btn btn-sm btn-outline-primary mr-1">현재 경로 저장</button>
+        <button type="button" id="dest_bookmark_del_btn" class="btn btn-sm btn-outline-danger">선택 삭제</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {{ macros.setting_checkbox('main_recursive', '하위 폴더 재귀 처리', value=arg.get('main_recursive', 'False'), desc=['ON 시 모든 하위 폴더의 파일까지 처리. 동일 파일명 충돌 주의. 시작 시점 값이 적용 + 저장됨.']) }}
 
 {{ macros.m_hr() }}
@@ -479,11 +495,57 @@ $("body").on('click', '#bookmark_del_btn', function(e) {
   });
 });
 
+// ─── 목적지 즐겨찾기 ─────────────────────────────────────
+function loadDestBookmarks() {
+  globalSendCommand('list_dest_bookmarks', '', '', '', function(ret) {
+    var items = (ret && ret.list) ? ret.list : [];
+    var $sel = $('#dest_bookmark_select').empty();
+    $sel.append('<option value="">-- 선택 --</option>');
+    items.forEach(function(b) {
+      var $opt = $('<option></option>')
+                  .attr('value', b.dest_path)
+                  .attr('data-id', b.id)
+                  .text(b.name + '  [' + (b.dest_path || '') + ']');
+      $sel.append($opt);
+    });
+  });
+}
+
+$("body").on('change', '#dest_bookmark_select', function() {
+  var v = $(this).val();
+  if (v) $('#main_dest_path').val(v);
+});
+
+$("body").on('click', '#dest_bookmark_add_btn', function(e) {
+  e.preventDefault();
+  var path = $('#main_dest_path').val().trim();
+  if (!path) { alert('먼저 목적지 경로를 입력하세요.'); return; }
+  var name = prompt('목적지 즐겨찾기 이름을 입력하세요:');
+  if (name === null) return;
+  name = (name || '').trim();
+  if (!name) { alert('이름을 입력하세요.'); return; }
+  globalSendCommand('add_dest_bookmark', name, path, '', function(ret) {
+    if (ret && ret.ret === 'success') loadDestBookmarks();
+  });
+});
+
+$("body").on('click', '#dest_bookmark_del_btn', function(e) {
+  e.preventDefault();
+  var $opt = $('#dest_bookmark_select option:selected');
+  var bid = $opt.attr('data-id');
+  if (!bid) { alert('삭제할 즐겨찾기를 선택하세요.'); return; }
+  if (!confirm('삭제할까요?\n' + $opt.text())) return;
+  globalSendCommand('delete_dest_bookmark', bid, '', '', function(ret) {
+    if (ret && ret.ret === 'success') loadDestBookmarks();
+  });
+});
+
 $(document).ready(function() {
   // 매크로가 만든 button들에 type 강제 지정 (iOS Safari가 form submit 으로 해석하는 경우 방지)
   $('#preview_btn, #start_btn, #stop_btn, #browse_btn').attr('type', 'button');
   refreshStatus();
   loadBookmarks();
+  loadDestBookmarks();
 });
 </script>
 {% endblock %}

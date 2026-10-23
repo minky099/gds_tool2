@@ -30,10 +30,11 @@ from plugin import *
 P = create_plugin_instance(setting)
 
 try:
-    from .model import ModelBatchHistory, ModelSourceBookmark
+    from .model import ModelBatchHistory, ModelSourceBookmark, ModelDestBookmark
     from .mod_main import ModuleMain
     P.ModelBatchHistory   = ModelBatchHistory
     P.ModelSourceBookmark = ModelSourceBookmark
+    P.ModelDestBookmark   = ModelDestBookmark
     P.set_module_list([ModuleMain])
 except Exception as e:
     P.logger.error(f'Exception:{str(e)}')

@@ -48,3 +48,20 @@ class ModelSourceBookmark(ModelBase):
         self.created_time = datetime.now()
         self.name         = name
         self.source_id    = source_id
+
+
+class ModelDestBookmark(ModelBase):
+    P = P
+    __tablename__ = f'{P.package_name}_dest_bookmark'
+    __table_args__ = {'mysql_collate': 'utf8_general_ci'}
+    __bind_key__ = P.package_name
+
+    id           = db.Column(db.Integer, primary_key=True)
+    created_time = db.Column(db.DateTime)
+    name         = db.Column(db.String)
+    dest_path    = db.Column(db.String)
+
+    def __init__(self, name='', dest_path=''):
+        self.created_time = datetime.now()
+        self.name         = name
+        self.dest_path    = dest_path

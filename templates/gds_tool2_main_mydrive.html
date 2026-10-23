@@ -13,6 +13,22 @@
     value=arg.get('main_dest_path', '/volume1/MK/Downloads/'),
     desc=['NAS 측 도착 디렉토리. 시작 시점 입력값이 저장됨.']) }}
 
+<!-- 목적지 즐겨찾기 -->
+<div class="row" style="padding-top:10px; padding-bottom:10px; align-items:center;">
+  <div class="col-sm-3 set-left"><strong>목적지 즐겨찾기</strong></div>
+  <div class="col-sm-9">
+    <div class="input-group col-sm-12">
+      <div class="d-flex align-items-center" style="font-size:12.5px; width:100%;">
+        <select id="dest_bookmark_select" class="form-control form-control-sm mr-2" style="max-width:340px;">
+          <option value="">-- 선택 --</option>
+        </select>
+        <button type="button" id="dest_bookmark_add_btn" class="btn btn-sm btn-outline-primary mr-1">현재 경로 저장</button>
+        <button type="button" id="dest_bookmark_del_btn" class="btn btn-sm btn-outline-danger">선택 삭제</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- 미리보기 area -->
 <div id="preview-area" style="display:none;">
   <div class="row" style="padding-top:10px; padding-bottom:10px; align-items:center;">
@@ -472,6 +488,52 @@ function refreshStatus() {
 $(document).ready(function() {
   $('#mydrive_browse_btn, #mydrive_preview_btn, #mydrive_start_btn, #mydrive_stop_btn, #browse_btn').attr('type', 'button');
   refreshStatus();
+  loadDestBookmarks();
+});
+
+// ─── 목적지 즐겨찾기 ─────────────────────────────────────
+function loadDestBookmarks() {
+  globalSendCommand('list_dest_bookmarks', '', '', '', function(ret) {
+    var items = (ret && ret.list) ? ret.list : [];
+    var $sel = $('#dest_bookmark_select').empty();
+    $sel.append('<option value="">-- 선택 --</option>');
+    items.forEach(function(b) {
+      var $opt = $('<option></option>')
+                  .attr('value', b.dest_path)
+                  .attr('data-id', b.id)
+                  .text(b.name + '  [' + (b.dest_path || '') + ']');
+      $sel.append($opt);
+    });
+  });
+}
+
+$("body").on('change', '#dest_bookmark_select', function() {
+  var v = $(this).val();
+  if (v) $('#main_dest_path').val(v);
+});
+
+$("body").on('click', '#dest_bookmark_add_btn', function(e) {
+  e.preventDefault();
+  var path = $('#main_dest_path').val().trim();
+  if (!path) { alert('먼저 목적지 경로를 입력하세요.'); return; }
+  var name = prompt('목적지 즐겨찾기 이름을 입력하세요:');
+  if (name === null) return;
+  name = (name || '').trim();
+  if (!name) { alert('이름을 입력하세요.'); return; }
+  globalSendCommand('add_dest_bookmark', name, path, '', function(ret) {
+    if (ret && ret.ret === 'success') loadDestBookmarks();
+  });
+});
+
+$("body").on('click', '#dest_bookmark_del_btn', function(e) {
+  e.preventDefault();
+  var $opt = $('#dest_bookmark_select option:selected');
+  var bid = $opt.attr('data-id');
+  if (!bid) { alert('삭제할 즐겨찾기를 선택하세요.'); return; }
+  if (!confirm('삭제할까요?\n' + $opt.text())) return;
+  globalSendCommand('delete_dest_bookmark', bid, '', '', function(ret) {
+    if (ret && ret.ret === 'success') loadDestBookmarks();
+  });
 });
 </script>
 {% endblock %}
